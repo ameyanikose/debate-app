@@ -390,7 +390,7 @@ export default function App() {
   const [autoRun, setAutoRun] = useLocalStorage("debate_autorun", true);
 
   // External LLM wiring
-  const [useLLM, setUseLLM] = useLocalStorage('debate_use_llm', false);
+  const [useLLM, setUseLLM] = useLocalStorage('debate_use_llm', true);
   const [provider, setProvider] = useLocalStorage<'openai'|'anthropic'|'openrouter'|'openrouter_free'>('debate_provider', 'openrouter_free');
   const [apiKey, setApiKey] = useLocalStorage('debate_api_key', '');
   const [baseUrl, setBaseUrl] = useLocalStorage('debate_baseurl', '');
@@ -1051,6 +1051,11 @@ Write ONLY the persona's next message.`;
                                   💚 Free models - no credits required!
                                 </span>
                               )}
+                              {!apiKey && (
+                                <span className="block mt-1 text-amber-600 font-medium">
+                                  ⚠️ Get your free API key from <a href="https://openrouter.ai" target="_blank" rel="noopener noreferrer" className="underline">OpenRouter.ai</a>
+                                </span>
+                              )}
                             </p>
                           </div>
 
@@ -1194,9 +1199,19 @@ Write ONLY the persona's next message.`;
                 onMouseEnter={handleUserInteraction}
                 onTouchStart={handleUserInteraction}
               >
-                {log.length === 0 && (
-                  <div className="text-sm text-neutral-500">Press <strong>Start</strong> to begin. Rotates speakers, changes topic each round, and stops after the selected rounds.</div>
-                )}
+              {log.length === 0 && (
+                <div className="text-sm text-neutral-500">
+                  Press <strong>Start</strong> to begin. Rotates speakers, changes topic each round, and stops after the selected rounds.
+                  {useLLM && !apiKey && (
+                    <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                      <div className="text-amber-800 font-medium">🤖 AI Mode Enabled</div>
+                      <div className="text-amber-700 text-xs mt-1">
+                        Add your OpenRouter API key in Settings to use AI-powered debates, or disable AI mode to use local generation.
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
                 <ul className="space-y-4">
                 {log.map((l, i) => {
                   const idx = nameToIndex.get(l.speaker) ?? 0;
