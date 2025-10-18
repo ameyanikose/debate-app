@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from "@/components/ui/dialog";
 import { Play, Square, Copy, Loader2, Settings, Info, Download } from "lucide-react";
+import { config } from "./config";
 
 /**
  * Copy of Auto‑run Activist Debate (shareable Prototype)
@@ -391,10 +392,10 @@ export default function App() {
 
   // External LLM wiring
   const [useLLM, setUseLLM] = useLocalStorage('debate_use_llm', true);
-  const [provider, setProvider] = useLocalStorage<'openai'|'anthropic'|'openrouter'|'openrouter_free'>('debate_provider', 'openrouter_free');
-  const [apiKey, setApiKey] = useLocalStorage('debate_api_key', '');
+  const [provider, setProvider] = useLocalStorage<'openai'|'anthropic'|'openrouter'|'openrouter_free'>('debate_provider', config.defaultProvider);
+  const [apiKey, setApiKey] = useLocalStorage('debate_api_key', config.backendApiKey);
   const [baseUrl, setBaseUrl] = useLocalStorage('debate_baseurl', '');
-  const [model, setModel] = useLocalStorage('debate_model', 'deepseek/deepseek-chat');
+  const [model, setModel] = useLocalStorage('debate_model', config.defaultModel);
   const [temperature, setTemperature] = useLocalStorage('debate_temp', 0.9);
   const [topP] = useLocalStorage('debate_top_p', 1);
   const [freqPenalty, setFreqPenalty] = useLocalStorage('debate_freq_penalty', 0.6);
@@ -1051,7 +1052,12 @@ Write ONLY the persona's next message.`;
                                   💚 Free models - no credits required!
                                 </span>
                               )}
-                              {!apiKey && (
+                              {config.hasBackendApiKey() && apiKey === config.backendApiKey && (
+                                <span className="block mt-1 text-blue-600 font-medium">
+                                  🔧 Using backend API key (demo mode)
+                                </span>
+                              )}
+                              {!apiKey && !config.hasBackendApiKey() && (
                                 <span className="block mt-1 text-amber-600 font-medium">
                                   ⚠️ Get your free API key from <a href="https://openrouter.ai" target="_blank" rel="noopener noreferrer" className="underline">OpenRouter.ai</a>
                                 </span>
@@ -1202,11 +1208,19 @@ Write ONLY the persona's next message.`;
               {log.length === 0 && (
                 <div className="text-sm text-neutral-500">
                   Press <strong>Start</strong> to begin. Rotates speakers, changes topic each round, and stops after the selected rounds.
-                  {useLLM && !apiKey && (
+                  {useLLM && !apiKey && !config.hasBackendApiKey() && (
                     <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                       <div className="text-amber-800 font-medium">🤖 AI Mode Enabled</div>
                       <div className="text-amber-700 text-xs mt-1">
                         Add your OpenRouter API key in Settings to use AI-powered debates, or disable AI mode to use local generation.
+                      </div>
+                    </div>
+                  )}
+                  {useLLM && config.hasBackendApiKey() && (
+                    <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                      <div className="text-blue-800 font-medium">🤖 AI Mode Enabled (Demo)</div>
+                      <div className="text-blue-700 text-xs mt-1">
+                        Using backend API key for AI-powered debates. You can add your own key in Settings for personal use.
                       </div>
                     </div>
                   )}
