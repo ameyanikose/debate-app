@@ -385,6 +385,7 @@ function runSmokeTests() {
 // ---------- App ----------
 export default function App() {
   const [personas, setPersonas] = useLocalStorage("debate_personas", DEFAULT_PERSONAS);
+  
   const [topics, setTopics] = useLocalStorage("debate_topics", DEFAULT_TOPICS);
   const [rounds, setRounds] = useLocalStorage("debate_rounds", 3);
   const [delayMs, setDelayMs] = useLocalStorage("debate_delay", 1500);
@@ -409,8 +410,6 @@ export default function App() {
   const [playing, setPlaying] = useState(false);
   const [log, setLog] = useState<Array<{ speaker: string; color: string; text: string; ts: number }>>([]);
   const [topicIdx, setTopicIdx] = useState(0);
-  const [speakerIdx, setSpeakerIdx] = useState(0);
-  const [round, setRound] = useState(1);
   const [loading, setLoading] = useState(false);
   const [copyState, setCopyState] = useState<"idle"|"copied"|"downloaded">("idle");
   const [connectionStatus, setConnectionStatus] = useState<"idle"|"testing"|"success"|"error">("idle");
@@ -426,11 +425,6 @@ export default function App() {
   const avatarMap = useMemo(() => {
     const m = new Map<string, string>();
     try { personas.forEach((p: any) => m.set(p.name, generateAvatarDataUrl({ name: p.name, color: p.color }))); } catch {}
-    return m;
-  }, [personas]);
-  const nameToIndex = useMemo(() => {
-    const m = new Map<string, number>();
-    try { personas.forEach((p: any, i: number) => m.set(p.name, i)); } catch {}
     return m;
   }, [personas]);
 
@@ -532,9 +526,87 @@ export default function App() {
     }
   }
 
+  // Smart random persona selection based on debate content
+  function selectRandomPersona(personas: any[], log: any[], topic: string) {
+    if (personas.length === 0) return { name: "Persona", role: "participant", color: "#6b7280" };
+    
+    // If this is the first message, just pick randomly
+    if (log.length === 0) {
+      return personas[Math.floor(Math.random() * personas.length)];
+    }
+    
+    // Get recent speakers to avoid immediate repetition
+    const recentSpeakers = log.slice(-3).map(l => l.speaker);
+    
+    // Filter out recent speakers
+    const availablePersonas = personas.filter(p => !recentSpeakers.includes(p.name));
+    
+    // If all personas spoke recently, allow any persona
+    const candidates = availablePersonas.length > 0 ? availablePersonas : personas;
+    
+    // Add some intelligence based on topic and debate content
+    const topicLower = topic.toLowerCase();
+    const lastMessage = log[log.length - 1]?.text?.toLowerCase() || "";
+    
+    // Score personas based on relevance to current topic and debate content
+    const scoredPersonas = candidates.map(persona => {
+      let score = Math.random(); // Base random score
+      
+      // Boost score based on topic relevance
+      const role = persona.role?.toLowerCase() || "";
+      
+      // Topic-based scoring
+      if (topicLower.includes("youth") || topicLower.includes("student")) {
+        if (role.includes("student") || role.includes("youth")) score += 0.3;
+      }
+      if (topicLower.includes("media") || topicLower.includes("communication")) {
+        if (role.includes("designer") || role.includes("digital") || role.includes("media")) score += 0.3;
+      }
+      if (topicLower.includes("labour") || topicLower.includes("union") || topicLower.includes("worker")) {
+        if (role.includes("labour") || role.includes("organiser")) score += 0.3;
+      }
+      if (topicLower.includes("business") || topicLower.includes("policy") || topicLower.includes("pragmatic")) {
+        if (role.includes("business") || role.includes("owner")) score += 0.3;
+      }
+      if (topicLower.includes("community") || topicLower.includes("local") || topicLower.includes("neighbourhood")) {
+        if (role.includes("community") || role.includes("neighbourhood")) score += 0.3;
+      }
+      
+      // Content-based scoring - if someone mentioned something related to this persona's expertise
+      if (lastMessage.includes("campus") || lastMessage.includes("university")) {
+        if (role.includes("student")) score += 0.2;
+      }
+      if (lastMessage.includes("union") || lastMessage.includes("worker")) {
+        if (role.includes("labour")) score += 0.2;
+      }
+      if (lastMessage.includes("media") || lastMessage.includes("story") || lastMessage.includes("narrative")) {
+        if (role.includes("designer") || role.includes("digital")) score += 0.2;
+      }
+      if (lastMessage.includes("policy") || lastMessage.includes("practical") || lastMessage.includes("solution")) {
+        if (role.includes("business") || role.includes("owner")) score += 0.2;
+      }
+      if (lastMessage.includes("community") || lastMessage.includes("local") || lastMessage.includes("mutual")) {
+        if (role.includes("community")) score += 0.2;
+      }
+      
+      return { persona, score };
+    });
+    
+    // Sort by score and pick from top candidates
+    scoredPersonas.sort((a, b) => b.score - a.score);
+    
+    // Pick from top 3 candidates to maintain some randomness
+    const topCandidates = scoredPersonas.slice(0, Math.min(3, scoredPersonas.length));
+    const selected = topCandidates[Math.floor(Math.random() * topCandidates.length)];
+    
+    return selected.persona;
+  }
+
   async function stepOnce() {
     if (!personas.length) return;
-    const speaker = personas[speakerIdx] || { name: "Persona", role: "participant", color: "#6b7280" };
+    
+    // Randomly select a persona, with some intelligence based on debate content
+    const speaker = selectRandomPersona(personas, log, topics[topicIdx] || "General");
     const topic = topics[topicIdx] || "General";
     const lastLine = log[log.length - 1]?.text || "";
 
@@ -585,20 +657,21 @@ Write ONLY the persona's next message.`;
 
     setLog((prev) => [...prev, { speaker: speaker.name, color: speaker.color, text, ts: Date.now() }]);
 
-    // advance pointers
-    const nextSpeaker = (speakerIdx + 1) % personas.length;
-    const nextRound = nextSpeaker === 0 ? round + 1 : round;
-    const done = nextRound > rounds;
-    const nextTopic = nextSpeaker === 0 && !done ? (topicIdx + 1) % Math.max(1, topics.length) : topicIdx;
+    // Advance round and topic based on total messages spoken
+    const totalMessages = log.length + 1; // +1 for the message we just added
+    const messagesPerRound = personas.length; // Each persona speaks once per round
+    const currentRound = Math.ceil(totalMessages / messagesPerRound);
+    const done = currentRound > rounds;
+    
+    // Change topic every round
+    const nextTopic = !done ? (currentRound - 1) % Math.max(1, topics.length) : topicIdx;
 
-    setSpeakerIdx(nextSpeaker);
-    setRound(nextRound);
     setTopicIdx(nextTopic);
     if (done) setPlaying(false);
   }
 
   function start() {
-    setLog([]); setRound(1); setSpeakerIdx(0); setTopicIdx(0); setPlaying(true);
+    setLog([]); setTopicIdx(0); setPlaying(true);
     setUserHasScrolled(false); // Reset scroll state for new debate
     setShowScrollButton(false);
   }
@@ -917,6 +990,7 @@ Write ONLY the persona's next message.`;
                     <div className="grid gap-2">
                       <div className="flex items-center justify-between">
                         <Button variant="outline" onClick={addPersona} style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2">Add Persona</Button>
+                        <Button variant="outline" onClick={() => setPersonas(DEFAULT_PERSONAS)} style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2">Reset to Defaults</Button>
                         <Button variant="secondary" onClick={() => setPersonaOpen(false)} style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2">Close</Button>
                       </div>
                       <div className="flex items-center justify-between mt-2">
@@ -1234,8 +1308,12 @@ Write ONLY the persona's next message.`;
               )}
                 <ul className="space-y-4">
                 {log.map((l, i) => {
-                  const idx = nameToIndex.get(l.speaker) ?? 0;
-                  const right = idx % 2 === 1;
+                  // Use a hash of the speaker name to determine side for consistency
+                  const hash = l.speaker.split('').reduce((a, b) => {
+                    a = ((a << 5) - a) + b.charCodeAt(0);
+                    return a & a;
+                  }, 0);
+                  const right = Math.abs(hash) % 2 === 1;
                   const clean = (l.text || "").replace(/\bTopic:[^\n]*/gi, "").replace(/\s+/g, " ").trim();
                   return (
                     <li key={`${l.ts}-${i}`} className={`grid gap-1 ${right ? 'justify-items-end' : 'justify-items-start'}`}>
