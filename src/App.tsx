@@ -97,12 +97,70 @@ async function llmReply({
 
 // ---------- Defaults ----------
 const DEFAULT_PERSONAS = [
-  { name: "Sofia Rossi", age: 20, role: "Student activist", color: "#f59e0b", bio: "University collective.", stance: "Hopeful youth voice; concrete campus actions." },
-  { name: "Matteo Bianchi", age: 38, role: "Labour organiser", color: "#3b82f6", bio: "Union campaigns.", stance: "Collective gains over headlines." },
-  { name: "Giulia Esposito", age: 29, role: "Digital campaign designer", color: "#10b981", bio: "Bridges media + movement.", stance: "Tell nuanced stories; convert attention to action." },
-  { name: "Lorenzo Conti", age: 52, role: "Small business owner", color: "#ef4444", bio: "Civic volunteer.", stance: "Pragmatic policy pathways." },
-  { name: "Chiara De Luca", age: 44, role: "Community organiser", color: "#a78bfa", bio: "Neighbourhood networks.", stance: "Mutual aid and local wins." },
-  { name: "Ahmed Rahman", age: 23, role: "Student", color: "#14b8a6", bio: "International student rep.", stance: "Inclusive spaces; accessible asks." },
+  {
+    "name": "Sofia Rossi",
+    "age": 24,
+    "role": "Student Activist",
+    "color": "#FF4C4C",
+    "bio": "Environmental science student in Bologna, part of Fridays for Future. Uses TikTok and Instagram to organize local climate strikes.",
+    "stance": "Believes activism must remain inclusive, creative, and people-powered, not institutional."
+  },
+  {
+    "name": "Matteo Bianchi",
+    "age": 31,
+    "role": "Policymaker Assistant",
+    "color": "#0077B6",
+    "bio": "Works for Milan's city council. Believes activism should influence policy through formal participation rather than protest.",
+    "stance": "Supports structured civic engagement; skeptical of disruptive activism."
+  },
+  {
+    "name": "Giulia Esposito",
+    "age": 27,
+    "role": "Digital Creator",
+    "color": "#FF9E00",
+    "bio": "Lifestyle influencer from Naples, occasionally posts about gender equality and sustainability.",
+    "stance": "Activism should be relatable, visual, and positive to reach audiences effectively."
+  },
+  {
+    "name": "Lorenzo Conti",
+    "age": 45,
+    "role": "Journalist",
+    "color": "#6C757D",
+    "bio": "Reporter for RAI covering protests and political events. Balances neutrality and audience expectations.",
+    "stance": "Sees activism as essential but often miscommunicated; media simplifies to attract attention."
+  },
+  {
+    "name": "Chiara De Luca",
+    "age": 35,
+    "role": "NGO Worker",
+    "color": "#2ECC71",
+    "bio": "Coordinator at ActionAid's Global Platform in Palermo focusing on youth empowerment and civic engagement.",
+    "stance": "Advocates for hybrid activism connecting digital and local participation."
+  },
+  {
+    "name": "Ahmed Rahman",
+    "age": 22,
+    "role": "Student and Migrant Rights Advocate",
+    "color": "#FF66C4",
+    "bio": "Second-generation Italian student in Turin who campaigns for inclusion in activist movements.",
+    "stance": "Critiques activism for lack of diversity and intersectionality; calls for inclusive representation."
+  },
+  {
+    "name": "Marco Gallo",
+    "age": 50,
+    "role": "Small Business Owner",
+    "color": "#FFC300",
+    "bio": "Owns a café in Bari. Consumes traditional news and expresses skepticism toward activism.",
+    "stance": "Views activism as disruptive and impractical; values stability and economic focus."
+  },
+  {
+    "name": "Elena Ferri",
+    "age": 29,
+    "role": "Tech Entrepreneur",
+    "color": "#9B5DE5",
+    "bio": "Runs a social impact startup in Rome promoting digital volunteering.",
+    "stance": "Supports tech-driven, measurable activism and data transparency."
+  }
 ];
 
 // ---------- API Provider Presets ----------
