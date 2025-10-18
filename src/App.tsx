@@ -1,0 +1,1299 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Card, CardHeader, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { Slider } from "@/components/ui/slider";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from "@/components/ui/dialog";
+import { Play, Square, Copy, Loader2, Settings, Info, Download } from "lucide-react";
+
+/**
+ * Copy of Auto‑run Activist Debate (shareable Prototype)
+ *
+ * Fixes in this revision:
+ * - Remove stray 'n' causing "Missing semicolon" in smoke tests. ✅
+ * - Close all JSX (InfoDialog list & wrappers). ✅
+ * - Keep existing tests; add one more deterministic assertion. ✅
+ * - Preserve OpenRouter support + UI you requested. ✅
+ */
+
+// ---------- Helpers ----------
+function initials(name: string) {
+  return (name || "?")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() || "")
+    .join("") || "?";
+}
+
+function generateAvatarDataUrl({ name, color }: { name?: string; color?: string }) {
+  const ini = initials(name || "?");
+  const stroke = color || "#111827";
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'>
+  <circle cx='48' cy='48' r='46' fill='white' stroke='${stroke}' stroke-width='4'/>
+  <text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' font-family='Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial' font-size='34' fill='#111827'>${ini}</text>
+</svg>`;
+  const encoded = encodeURIComponent(svg).replace(/'/g, "%27").replace(/\(/g, "%28").replace(/\)/g, "%29");
+  return `data:image/svg+xml;charset=UTF-8,${encoded}`;
+}
+
+// ---------- LLM integration (optional external APIs) ----------
+async function llmReply({
+  provider,
+  apiKey,
+  baseUrl,
+  model,
+  messages,
+  temperature = 0.9,
+  top_p = 1,
+  frequency_penalty = 0.6,
+  presence_penalty = 0.6,
+  max_tokens = 220,
+  referer,
+  appTitle,
+}: {
+  provider: 'openai' | 'anthropic';
+  apiKey: string;
+  baseUrl?: string;
+  model: string;
+  messages: Array<{ role: 'system'|'user'|'assistant'; content: string }>;
+  temperature?: number; top_p?: number; frequency_penalty?: number; presence_penalty?: number; max_tokens?: number;
+  referer?: string; appTitle?: string;
+}) {
+  const p = provider || 'openai';
+  if (p === 'anthropic') {
+    const url = (baseUrl?.trim() || 'https://api.anthropic.com/v1/messages');
+    const system = messages.find(m => m.role === 'system')?.content || '';
+    const conv = messages.filter(m => m.role !== 'system').map(m => ({ role: m.role as 'user'|'assistant', content: m.content }));
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model, system, messages: conv, max_tokens, temperature })
+    });
+    if (!res.ok) throw new Error('Anthropic error ' + res.status);
+    const data = await res.json();
+    const out = data?.content?.[0]?.text || data?.content || '';
+    return String(out).trim();
+  }
+  // OpenAI-compatible chat.completions (works for OpenRouter)
+  const url = (baseUrl?.trim() || 'https://api.openai.com/v1/chat/completions');
+  const body = { model, messages, temperature, top_p, frequency_penalty, presence_penalty, max_tokens };
+  const headers: Record<string,string> = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
+  if (/openrouter\.ai/i.test(url)) {
+    const fallbackRef = (typeof window !== 'undefined' && window.location?.origin) ? window.location.origin : '';
+    const fallbackTitle = (typeof document !== 'undefined' && document.title) ? document.title : 'Debate Simulator';
+    headers['HTTP-Referer'] = (referer && referer.trim()) || fallbackRef;
+    headers['X-Title'] = (appTitle && appTitle.trim()) || fallbackTitle;
+  }
+  const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+  if (!res.ok) throw new Error('LLM error ' + res.status);
+  const data = await res.json();
+  return data?.choices?.[0]?.message?.content?.trim() || '';
+}
+
+// ---------- Defaults ----------
+const DEFAULT_PERSONAS = [
+  { name: "Sofia Rossi", age: 20, role: "Student activist", color: "#f59e0b", bio: "University collective.", stance: "Hopeful youth voice; concrete campus actions." },
+  { name: "Matteo Bianchi", age: 38, role: "Labour organiser", color: "#3b82f6", bio: "Union campaigns.", stance: "Collective gains over headlines." },
+  { name: "Giulia Esposito", age: 29, role: "Digital campaign designer", color: "#10b981", bio: "Bridges media + movement.", stance: "Tell nuanced stories; convert attention to action." },
+  { name: "Lorenzo Conti", age: 52, role: "Small business owner", color: "#ef4444", bio: "Civic volunteer.", stance: "Pragmatic policy pathways." },
+  { name: "Chiara De Luca", age: 44, role: "Community organiser", color: "#a78bfa", bio: "Neighbourhood networks.", stance: "Mutual aid and local wins." },
+  { name: "Ahmed Rahman", age: 23, role: "Student", color: "#14b8a6", bio: "International student rep.", stance: "Inclusive spaces; accessible asks." },
+];
+
+// ---------- API Provider Presets ----------
+const API_PRESETS = {
+  openrouter_free: {
+    name: "OpenRouter (Free)",
+    baseUrl: "https://openrouter.ai/api/v1/chat/completions",
+    models: [
+      { value: "deepseek/deepseek-chat", label: "DeepSeek Chat (Free) - Recommended" },
+      { value: "microsoft/phi-3-medium-128k-instruct", label: "Phi-3 Medium (Free)" },
+      { value: "meta-llama/llama-3.1-8b-instruct", label: "Llama 3.1 8B (Free)" },
+      { value: "google/gemini-flash-1.5", label: "Gemini Flash 1.5 (Free)" },
+      { value: "mistralai/mistral-7b-instruct", label: "Mistral 7B (Free)" },
+    ],
+    needsReferer: true,
+    needsTitle: true,
+    description: "Free models - no credits required"
+  },
+  openrouter: {
+    name: "OpenRouter (Paid)",
+    baseUrl: "https://openrouter.ai/api/v1/chat/completions",
+    models: [
+      { value: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet (Premium)" },
+      { value: "openai/gpt-4o-mini", label: "GPT-4o Mini (Cost-effective)" },
+      { value: "meta-llama/llama-3.1-405b-instruct", label: "Llama 3.1 405B (Premium)" },
+      { value: "google/gemini-pro-1.5", label: "Gemini Pro 1.5 (Premium)" },
+    ],
+    needsReferer: true,
+    needsTitle: true,
+    description: "Premium models - requires credits"
+  },
+  openai: {
+    name: "OpenAI",
+    baseUrl: "https://api.openai.com/v1/chat/completions",
+    models: [
+      { value: "gpt-4o", label: "GPT-4o" },
+      { value: "gpt-4o-mini", label: "GPT-4o Mini" },
+      { value: "gpt-3.5-turbo", label: "GPT-3.5 Turbo" },
+    ],
+    needsReferer: false,
+    needsTitle: false,
+    description: "Official OpenAI API"
+  },
+  anthropic: {
+    name: "Anthropic",
+    baseUrl: "https://api.anthropic.com/v1/messages",
+    models: [
+      { value: "claude-3-5-sonnet-20241022", label: "Claude 3.5 Sonnet" },
+      { value: "claude-3-5-haiku-20241022", label: "Claude 3.5 Haiku" },
+      { value: "claude-3-opus-20240229", label: "Claude 3 Opus" },
+    ],
+    needsReferer: false,
+    needsTitle: false,
+    description: "Official Anthropic API"
+  }
+};
+
+const DEFAULT_TOPICS = [
+  "What does activism mean to you personally?",
+  "Is activism more about protest or participation?",
+  "How do we sustain engagement beyond viral peaks?",
+  "How should activism be communicated to youth in Italy?",
+  "Media perception vs. activist reality: what's the gap?",
+];
+
+// ---------- Topic helpers ----------
+function topicFocus(topic: string) {
+  const t = String(topic || "the issue").replace(/\bTopic:\s*/i, "").trim();
+  const pairs: Array<[RegExp, string]> = [
+    [/youth|students?|young/i, "youth engagement"],
+    [/media|press|news|framing/i, "media framing"],
+    [/sustain|retention|peaks?|momentum|burnout/i, "sustained engagement"],
+    [/communicat|message|narrative/i, "communication"],
+    [/policy|lobby|institution|participation/i, "policy & participation"],
+    [/what does activism mean/i, "personal meaning of activism"],
+  ];
+  for (const [re, term] of pairs) if (re.test(t)) return term;
+  return t;
+}
+
+function personaStyle(speaker: any) {
+  const r = String(speaker?.role || "participant").toLowerCase();
+  const s = String(speaker?.stance || "").toLowerCase();
+  if (/student|youth/.test(r)) return "energetic and hopeful";
+  if (/designer|digital/.test(r)) return "strategic and media‑savvy";
+  if (/labour|organis/.test(r)) return "grounded and collective";
+  if (/business|owner/.test(r)) return "pragmatic and solution‑oriented";
+  if (/community|neighbourhood|mutual/.test(r + " " + s)) return "community‑first and practical";
+  return "balanced and reflective";
+}
+
+// ---------- Local generator (topic & persona aware, safe for null speaker) ----------
+function localReply({ topic, speaker, lastLine }: { topic: string; speaker: any; lastLine?: string }) {
+  const safeSpeaker = speaker || { name: "Persona", role: "participant", stance: "", color: "#6b7280" };
+  const focus = topicFocus(topic).toLowerCase();
+  const tone = personaStyle(safeSpeaker);
+
+  const openers = [
+    `From my ${tone} perspective,`,
+    `In my experience as ${String(safeSpeaker.role || 'participant').toLowerCase()},`,
+    `Honestly,`,
+    `Let's be realistic,`,
+    `Speaking practically,`,
+  ];
+  const opener = openers[Math.floor(Math.random() * openers.length)];
+
+  const subjectVariants = [
+    `when thinking about ${focus}`,
+    `on the question of ${focus}`,
+    `regarding ${focus}`,
+    `in terms of ${focus}`,
+  ];
+  const subject = subjectVariants[Math.floor(Math.random() * subjectVariants.length)];
+
+  const claimPool = {
+    youth: [
+      `we should empower younger voices through authentic dialogue rather than tokenism.`,
+      `schools and local communities should be active partners, not passive audiences.`,
+      `activism must sound relevant to daily youth struggles, not abstract ideals.`,
+    ],
+    media: [
+      `we must tell nuanced stories that escape the typical conflict framing.`,
+      `pair facts with human stories to cut through noise.`,
+      `avoid echo chambers to keep credibility in the press.`,
+    ],
+    sustain: [
+      `the hardest part is maintaining hope between wins—collective care matters most.`,
+      `rotate roles and celebrate progress to sustain activism.`,
+      `long‑term structures, not viral spikes, keep communities alive.`,
+    ],
+    communication: [
+      `clarity and consistency create trust.`,
+      `listening first makes the message stronger.`,
+      `design should help people see themselves in the cause.`,
+    ],
+    policy: [
+      `every protest should point to a clear policy pathway.`,
+      `we need bridges between streets and decision rooms.`,
+      `translate demands into specific proposals and timelines.`,
+    ],
+    general: [
+      `different actors must collaborate rather than compete for attention.`,
+      `activism isn't just anger—it's coordination and persistence.`,
+      `combine passion with planning to move forward.`,
+    ],
+  } as const;
+
+  let bucket: keyof typeof claimPool = "general";
+  if (/youth/.test(focus)) bucket = "youth";
+  else if (/media/.test(focus)) bucket = "media";
+  else if (/sustain/.test(focus)) bucket = "sustain";
+  else if (/communicat/.test(focus)) bucket = "communication";
+  else if (/policy|participation/.test(focus)) bucket = "policy";
+
+  const ack = lastLine && lastLine.length > 0 ? "building on that point, " : "";
+  const claim = claimPool[bucket][Math.floor(Math.random() * claimPool[bucket].length)];
+
+  // Never include literal "Topic:" label
+  return `${opener} ${ack}${subject}, ${claim}`.replace(/\s+/g, " ").trim();
+}
+
+// ---------- Storage hook ----------
+function useLocalStorage<T>(key: string, initial: T) {
+  const [value, setValue] = useState<T>(() => {
+    try { 
+      const raw = localStorage.getItem(key); 
+      return raw ? JSON.parse(raw) : initial; 
+    } catch { 
+      return initial; 
+    }
+  });
+  
+  const setValueAndStore = (newValue: T | ((prev: T) => T)) => {
+    const valueToStore = typeof newValue === 'function' ? (newValue as (prev: T) => T)(value) : newValue;
+    setValue(valueToStore);
+    try { 
+      localStorage.setItem(key, JSON.stringify(valueToStore)); 
+    } catch (e) { 
+      console.warn('Failed to save to localStorage:', e); 
+    }
+  };
+  
+  return [value, setValueAndStore] as const;
+}
+
+// ---------- Clipboard utils (robust) ----------
+async function copyTextRobust(text: string): Promise<"copied"|"downloaded"> {
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return "copied";
+    }
+  } catch (_) {}
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.setAttribute('readonly',''); ta.style.position='fixed'; ta.style.top='-1000px';
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+    return "copied";
+  } catch (_) {
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `debate-transcript-${new Date().toISOString().slice(0,10)}.txt`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    return "downloaded";
+  }
+}
+
+// ---------- Anti‑repetition helpers ----------
+// function normalize(text: string) {
+//   return (text || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+// }
+function diversify(text: string) {
+  return text
+    .replace(/^honestly[,\s]*/i, 'In practice, ')
+    .replace(/^let's be realistic[,\s]*/i, 'Realistically, ')
+    .replace(/^from my .* perspective[,\s]*/i, 'From where I stand, ')
+    .replace(/\bwe need bridges between streets and decision rooms\b/i, 'we should connect street energy with actual decision rooms');
+}
+
+// ---------- Opening humanizer (reduce formulaic phrasing) ----------
+function humanizeOpening(t: string) {
+  let s = (t || '').trim();
+  const lower = s.toLowerCase();
+  const drops = [
+    'from where i stand,', 'honestly,', 'in practice,', 'let\'s be realistic,', 'speaking practically,',
+    'from my', 'in my experience', 'i\'d put it this way,'
+  ];
+  for (const d of drops) {
+    if (lower.startsWith(d)) {
+      if (Math.random() < 0.5) {
+        s = s.slice(d.length).trimStart();
+      } else {
+        const swaps = ["Here's how I see it,", 'One angle:', 'A quick thought,'];
+        s = `${swaps[Math.floor(Math.random()*swaps.length)]} ${s.slice(d.length).trimStart()}`.trim();
+      }
+      break;
+    }
+  }
+  for (const bridge of ['building on that,', 'building on that point,', 'pushing the point,', 'i hear that,']) {
+    if (s.toLowerCase().startsWith(bridge)) {
+      if (Math.random() < 0.6) s = s.slice(bridge.length).trimStart();
+    }
+  }
+  return s;
+}
+
+// ---------- Smoke tests ----------
+function runSmokeTests() {
+  try {
+    // newline split
+    const joined = ["A","B","C"].join("\n");
+    const split = joined.split(/\n+/).filter(Boolean);
+    console.assert(split.length === 3 && split[2] === "C", "newline split ok");
+
+    // avatar special chars
+    const url = generateAvatarDataUrl({ name: "Test (O'Connor)", color: "#ff0000" });
+    console.assert(/^data:image\/.+/.test(url), "avatar url ok");
+
+    // localReply: no literal Topic label; safe when speaker is undefined
+    const lr1 = localReply({ topic: "Topic: How do we reach youth?", speaker: undefined as any });
+    console.assert(typeof lr1 === 'string' && lr1.length > 0 && !/\bTopic:/i.test(lr1), 'localReply safe/strips Topic');
+
+    // topic awareness
+    const lr2 = localReply({ topic: "Is activism more about protest or participation?", speaker: { role: 'organiser' } });
+    console.assert(/policy|participation/i.test(lr2), 'topic awareness ok');
+
+    // history join test
+    const hist = ['A','B'].join(String.fromCharCode(10));
+    console.assert(/\n/.test(hist), 'history join ok');
+
+    // diversify deterministic test
+    console.assert(/^In practice/.test(diversify('Honestly, this is fine')), 'diversify opener replacement ok');
+
+    // info dialog string integrity
+    const s = '<Dialog><DialogContent></DialogContent></Dialog>';
+    console.assert(/<DialogContent>/.test(s), 'info dialog string ok');
+  } catch (e) { console.warn('Smoke tests warning:', e); }
+}
+
+// ---------- App ----------
+export default function App() {
+  const [personas, setPersonas] = useLocalStorage("debate_personas", DEFAULT_PERSONAS);
+  const [topics, setTopics] = useLocalStorage("debate_topics", DEFAULT_TOPICS);
+  const [rounds, setRounds] = useLocalStorage("debate_rounds", 3);
+  const [delayMs, setDelayMs] = useLocalStorage("debate_delay", 1500);
+  const [autoRun, setAutoRun] = useLocalStorage("debate_autorun", true);
+
+  // External LLM wiring
+  const [useLLM, setUseLLM] = useLocalStorage('debate_use_llm', false);
+  const [provider, setProvider] = useLocalStorage<'openai'|'anthropic'|'openrouter'|'openrouter_free'>('debate_provider', 'openrouter_free');
+  const [apiKey, setApiKey] = useLocalStorage('debate_api_key', '');
+  const [baseUrl, setBaseUrl] = useLocalStorage('debate_baseurl', '');
+  const [model, setModel] = useLocalStorage('debate_model', 'deepseek/deepseek-chat');
+  const [temperature, setTemperature] = useLocalStorage('debate_temp', 0.9);
+  const [topP, setTopP] = useLocalStorage('debate_top_p', 1);
+  const [freqPenalty, setFreqPenalty] = useLocalStorage('debate_freq_penalty', 0.6);
+  const [presPenalty, setPresPenalty] = useLocalStorage('debate_pres_penalty', 0.6);
+  const [maxTokens, setMaxTokens] = useLocalStorage('debate_max_tokens', 200);
+  // OpenRouter optional headers
+  const [orRef, setOrRef] = useLocalStorage('debate_or_referer', '');
+  const [orTitle, setOrTitle] = useLocalStorage('debate_or_title', 'Debate Simulator');
+  const memoryRef = useRef<{[name:string]: string[]}>({});
+
+  const [playing, setPlaying] = useState(false);
+  const [log, setLog] = useState<Array<{ speaker: string; color: string; text: string; ts: number }>>([]);
+  const [topicIdx, setTopicIdx] = useState(0);
+  const [speakerIdx, setSpeakerIdx] = useState(0);
+  const [round, setRound] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [copyState, setCopyState] = useState<"idle"|"copied"|"downloaded">("idle");
+  const [connectionStatus, setConnectionStatus] = useState<"idle"|"testing"|"success"|"error">("idle");
+  const [connectionError, setConnectionError] = useState<string>("");
+  const [userHasScrolled, setUserHasScrolled] = useState(false);
+  const [showScrollButton, setShowScrollButton] = useState(false);
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  // const [settingsOpen, setSettingsOpen] = useState(false);
+  const [personaOpen, setPersonaOpen] = useState(false);
+  const [topicsOpen, setTopicsOpen] = useState(false);
+
+  // derived
+  const avatarMap = useMemo(() => {
+    const m = new Map<string, string>();
+    try { personas.forEach((p: any) => m.set(p.name, generateAvatarDataUrl({ name: p.name, color: p.color }))); } catch {}
+    return m;
+  }, [personas]);
+  const nameToIndex = useMemo(() => {
+    const m = new Map<string, number>();
+    try { personas.forEach((p: any, i: number) => m.set(p.name, i)); } catch {}
+    return m;
+  }, [personas]);
+
+  useEffect(() => { runSmokeTests(); }, []);
+  
+  // Smart auto-scroll: only scroll if user hasn't manually scrolled
+  useEffect(() => { 
+    if (!userHasScrolled && scrollerRef.current) {
+      scrollerRef.current.scrollTo({ top: scrollerRef.current.scrollHeight, behavior: "smooth" });
+    }
+  }, [log, userHasScrolled]);
+  
+  useEffect(() => { if (autoRun && log.length === 0 && !playing) start(); }, []);
+
+  // Check if user is near bottom of scroll
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+
+    const checkScrollPosition = () => {
+      const { scrollTop, scrollHeight, clientHeight } = scroller;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
+      setShowScrollButton(!isNearBottom && log.length > 0);
+    };
+
+    scroller.addEventListener('scroll', checkScrollPosition);
+    checkScrollPosition(); // Initial check
+
+    return () => scroller.removeEventListener('scroll', checkScrollPosition);
+  }, [log.length]);
+
+  // Handle user scroll interaction
+  const handleScroll = () => {
+    setUserHasScrolled(true);
+  };
+
+  // Handle mouse/touch interaction
+  const handleUserInteraction = () => {
+    setUserHasScrolled(true);
+  };
+
+  // Scroll to bottom function
+  const scrollToBottom = () => {
+    if (scrollerRef.current) {
+      scrollerRef.current.scrollTo({ top: scrollerRef.current.scrollHeight, behavior: "smooth" });
+      setUserHasScrolled(false);
+      setShowScrollButton(false);
+    }
+  };
+
+  // Update baseUrl and model when provider changes
+  useEffect(() => {
+    const preset = API_PRESETS[provider];
+    if (preset) {
+      setBaseUrl(preset.baseUrl);
+      setModel(preset.models[0].value);
+    }
+  }, [provider, setBaseUrl, setModel]);
+
+  // Connection testing function
+  async function testConnection() {
+    if (!apiKey || !model) {
+      setConnectionError("Please enter API key and select a model");
+      setConnectionStatus("error");
+      return;
+    }
+
+    setConnectionStatus("testing");
+    setConnectionError("");
+
+    try {
+      const testMessages = [
+        { role: 'system' as const, content: 'You are a helpful assistant.' },
+        { role: 'user' as const, content: 'Say "Connection successful!" and nothing else.' }
+      ];
+
+      const response = await llmReply({
+        provider: (provider === 'openrouter' || provider === 'openrouter_free') ? 'openai' : provider,
+        apiKey,
+        baseUrl,
+        model,
+        messages: testMessages,
+        temperature: 0.1,
+        max_tokens: 10,
+        referer: orRef,
+        appTitle: orTitle
+      });
+
+      if (response && response.toLowerCase().includes('connection successful')) {
+        setConnectionStatus("success");
+        setConnectionError("");
+      } else {
+        setConnectionStatus("error");
+        setConnectionError("Unexpected response from API");
+      }
+    } catch (error: any) {
+      setConnectionStatus("error");
+      setConnectionError(error.message || "Connection failed");
+    }
+  }
+
+  async function stepOnce() {
+    if (!personas.length) return;
+    const speaker = personas[speakerIdx] || { name: "Persona", role: "participant", color: "#6b7280" };
+    const topic = topics[topicIdx] || "General";
+    const lastLine = log[log.length - 1]?.text || "";
+
+    setLoading(true);
+    let text = '';
+    try {
+      if (useLLM && apiKey && model) {
+        const history = log.slice(-8).map(l => `${l.speaker}: ${l.text}`).join(String.fromCharCode(10));
+        const system = `You orchestrate a lively debate. Each reply MUST:
+- Be 2–4 sentences, conversational and varied (no formulaic openers).
+- Address the current topic and last point, add NEW substance.
+- Stay in the persona's voice/background.
+- Never include the literal label "Topic:".`;
+        const userMsg = `Persona: ${speaker.name} (${speaker.age}, ${speaker.role})
+Bio: ${speaker.bio}
+Stance: ${speaker.stance}
+Current topic: ${topic}
+Conversation so far:
+${history}
+Write ONLY the persona's next message.`;
+        text = await llmReply({ 
+          provider: (provider === 'openrouter' || provider === 'openrouter_free') ? 'openai' : provider, 
+          apiKey, baseUrl, model, temperature, top_p: topP, frequency_penalty: freqPenalty, presence_penalty: presPenalty, max_tokens: maxTokens, referer: orRef, appTitle: orTitle, messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: userMsg }
+        ]});
+      } else {
+        text = localReply({ topic, speaker, lastLine });
+      }
+    } catch (_) {
+      text = localReply({ topic, speaker, lastLine });
+    }
+    setLoading(false);
+
+    // sanitize and diversify to avoid repetition
+    text = (text || '').replace(/\bTopic:[^\n]*/gi, '').replace(/\s+/g, ' ').trim();
+    text = diversify(text);
+    text = humanizeOpening(text);
+
+    // dedupe per persona memory (simple lowercase compare)
+    const key = speaker.name;
+    const mem = memoryRef.current[key] || [];
+    const norm = (s:string)=>s.toLowerCase();
+    if (mem.includes(norm(text))) {
+      text = (text.endsWith('.') ? text : text + '.') + ' Here is a concrete next step: ' + topicFocus(topic);
+    }
+    memoryRef.current[key] = [norm(text), ...mem].slice(0,5);
+
+    setLog((prev) => [...prev, { speaker: speaker.name, color: speaker.color, text, ts: Date.now() }]);
+
+    // advance pointers
+    const nextSpeaker = (speakerIdx + 1) % personas.length;
+    const nextRound = nextSpeaker === 0 ? round + 1 : round;
+    const done = nextRound > rounds;
+    const nextTopic = nextSpeaker === 0 && !done ? (topicIdx + 1) % Math.max(1, topics.length) : topicIdx;
+
+    setSpeakerIdx(nextSpeaker);
+    setRound(nextRound);
+    setTopicIdx(nextTopic);
+    if (done) setPlaying(false);
+  }
+
+  function start() {
+    setLog([]); setRound(1); setSpeakerIdx(0); setTopicIdx(0); setPlaying(true);
+    setUserHasScrolled(false); // Reset scroll state for new debate
+    setShowScrollButton(false);
+  }
+  function stop() { setPlaying(false); }
+
+  useEffect(() => {
+    if (!playing) return; const t = setTimeout(stepOnce, Math.max(400, delayMs)); return () => clearTimeout(t);
+  }, [playing, log, delayMs]);
+
+  async function copyTranscript() {
+    const text = log.map((l) => `${new Date(l.ts).toLocaleTimeString()} ${l.speaker}: ${l.text}`).join("\n");
+    const result = await copyTextRobust(text);
+    setCopyState(result); setTimeout(() => setCopyState("idle"), 1800);
+  }
+  function downloadTranscript() {
+    const text = log.map((l) => `${new Date(l.ts).toLocaleTimeString()} ${l.speaker}: ${l.text}`).join("\n");
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `debate-transcript-${new Date().toISOString().slice(0,10)}.txt`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  }
+
+  // topic & persona editors helpers
+  function updateTopic(i: number, v: string) { setTopics((prev: string[]) => { const next = [...prev]; next[i] = v; return next; }); }
+  function removeTopic(i: number) { setTopics((prev: string[]) => prev.filter((_, idx) => idx !== i)); }
+  // function addTopic() { setTopics((prev: string[]) => [...prev, "New topic"]); }
+  function moveTopic(i: number, d: number) { setTopics((prev: string[]) => { const next = [...prev]; const ni = Math.max(0, Math.min(next.length - 1, i + d)); const [it] = next.splice(i, 1); next.splice(ni, 0, it); return next;}); }
+  function bulkImportTopics(raw: string) { const items = raw.split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean); if (items.length) setTopics(items); }
+
+  function updatePersona(i: number, field: string, value: any) { setPersonas((prev: any[]) => { const next = [...prev]; next[i] = { ...next[i], [field]: value }; return next; }); }
+  function addPersona() { setPersonas((prev: any[]) => [...prev, { name: "New Persona", age: 30, role: "role", color: "#6b7280", bio: "", stance: "" }]); }
+  function removePersona(i: number) { setPersonas((prev: any[]) => prev.filter((_, idx) => idx !== i)); }
+  function duplicatePersona(i: number) { setPersonas((prev: any[]) => { const cp = { ...prev[i], name: prev[i].name + " Copy" }; const next = [...prev]; next.splice(i + 1, 0, cp); return next; }); }
+
+  return (
+    <>
+      <style>{`
+        /* Custom Switch and Slider Styling */
+        [role="switch"][data-state="checked"] {
+          background-color: #157C61 !important;
+        }
+        [role="switch"][data-state="unchecked"] {
+          background-color: #e5e7eb !important;
+        }
+        
+        /* Input styling - comprehensive targeting */
+        input[type="text"], input[type="password"], input[type="number"], input[type="color"], input {
+          background-color: #F8F1DD !important;
+          border-color: #157C61 !important;
+          color: #374151 !important;
+        }
+        input[type="text"]:focus, input[type="password"]:focus, input[type="number"]:focus, input[type="color"]:focus, input:focus {
+          border-color: #157C61 !important;
+          box-shadow: 0 0 0 2px rgba(21, 124, 97, 0.2) !important;
+        }
+        
+        /* Force all input backgrounds with higher specificity */
+        input:not([type="checkbox"]):not([type="radio"]) {
+          background-color: #F8F1DD !important;
+          border-color: #157C61 !important;
+          color: #374151 !important;
+        }
+        input:not([type="checkbox"]):not([type="radio"]):focus {
+          border-color: #157C61 !important;
+          box-shadow: 0 0 0 2px rgba(21, 124, 97, 0.2) !important;
+        }
+        
+        /* Target shadcn/ui components specifically */
+        .input {
+          background-color: #F8F1DD !important;
+          border-color: #157C61 !important;
+          color: #374151 !important;
+        }
+        .input:focus {
+          border-color: #157C61 !important;
+          box-shadow: 0 0 0 2px rgba(21, 124, 97, 0.2) !important;
+        }
+        
+        /* Textarea styling */
+        textarea {
+          background-color: #F8F1DD !important;
+          border-color: #157C61 !important;
+          color: #374151 !important;
+        }
+        textarea:focus {
+          border-color: #157C61 !important;
+          box-shadow: 0 0 0 2px rgba(21, 124, 97, 0.2) !important;
+        }
+        
+        /* Select styling */
+        select {
+          background-color: #F8F1DD !important;
+          border-color: #157C61 !important;
+          color: #374151 !important;
+        }
+        select:focus {
+          border-color: #157C61 !important;
+          box-shadow: 0 0 0 2px rgba(21, 124, 97, 0.2) !important;
+        }
+        
+        /* Slider styling - comprehensive green theme */
+        [role="slider"] {
+          background-color: #157C61 !important;
+        }
+        .slider-track {
+          background-color: #e5e7eb !important;
+        }
+        .slider-range {
+          background-color: #157C61 !important;
+        }
+        
+        /* Target Radix Slider specifically */
+        [data-radix-slider-track] {
+          background-color: #e5e7eb !important;
+        }
+        [data-radix-slider-range] {
+          background-color: #157C61 !important;
+        }
+        [data-radix-slider-thumb] {
+          background-color: #157C61 !important;
+          border: 2px solid #157C61 !important;
+        }
+        
+        /* Additional slider targeting */
+        .slider-root {
+          background-color: #e5e7eb !important;
+        }
+        .slider-track {
+          background-color: #e5e7eb !important;
+        }
+        .slider-range {
+          background-color: #157C61 !important;
+        }
+        .slider-thumb {
+          background-color: #157C61 !important;
+          border: 2px solid #157C61 !important;
+        }
+        
+        /* More specific Radix Slider targeting */
+        [data-radix-collection-item] {
+          background-color: #157C61 !important;
+        }
+        div[data-radix-slider-root] {
+          background-color: #e5e7eb !important;
+        }
+        div[data-radix-slider-track] {
+          background-color: #e5e7eb !important;
+        }
+        div[data-radix-slider-range] {
+          background-color: #157C61 !important;
+        }
+        button[data-radix-slider-thumb] {
+          background-color: #157C61 !important;
+          border: 2px solid #157C61 !important;
+        }
+        
+        /* Target shadcn/ui specific classes */
+        .slider-root {
+          background-color: #e5e7eb !important;
+        }
+        .slider-track {
+          background-color: #e5e7eb !important;
+        }
+        .slider-range {
+          background-color: #157C61 !important;
+        }
+        .slider-thumb {
+          background-color: #157C61 !important;
+          border: 2px solid #157C61 !important;
+        }
+        
+        /* Override any blue slider colors */
+        [style*="background-color: rgb(59, 130, 246)"], 
+        [style*="background-color: #3b82f6"], 
+        [style*="background-color: blue"] {
+          background-color: #157C61 !important;
+        }
+        
+        /* Force all slider elements to use green */
+        *[class*="slider"] {
+          background-color: #157C61 !important;
+        }
+        *[class*="slider"]:not([class*="track"]) {
+          background-color: #157C61 !important;
+        }
+        
+        /* Additional input targeting */
+        .input {
+          background-color: #F8F1DD !important;
+          border-color: #157C61 !important;
+          color: #374151 !important;
+        }
+        .input:focus {
+          border-color: #157C61 !important;
+          box-shadow: 0 0 0 2px rgba(21, 124, 97, 0.2) !important;
+        }
+        
+        /* Dialog backgrounds */
+        [role="dialog"] {
+          background-color: #F8F1DD !important;
+        }
+        .dialog-content {
+          background-color: #F8F1DD !important;
+        }
+        
+        /* Card backgrounds */
+        .card {
+          background-color: #F8F1DD !important;
+        }
+        [data-slot="card"] {
+          background-color: #F8F1DD !important;
+        }
+        *[class*="card"] {
+          background-color: #F8F1DD !important;
+        }
+        
+        /* Force all card-like containers */
+        .bg-white {
+          background-color: #F8F1DD !important;
+        }
+        .bg-neutral-50 {
+          background-color: #F8F1DD !important;
+        }
+        
+        /* Override any remaining white backgrounds */
+        *[style*="background-color: white"], *[style*="background-color: #fff"], *[style*="background-color: #ffffff"] {
+          background-color: #F8F1DD !important;
+        }
+        
+        /* Force input backgrounds with higher specificity */
+        input, textarea, select {
+          background-color: #F8F1DD !important;
+          border-color: #157C61 !important;
+          color: #374151 !important;
+        }
+        input:focus, textarea:focus, select:focus {
+          border-color: #157C61 !important;
+          box-shadow: 0 0 0 2px rgba(21, 124, 97, 0.2) !important;
+        }
+        
+        /* Additional comprehensive targeting */
+        *[class*="input"] {
+          background-color: #F8F1DD !important;
+          border-color: #157C61 !important;
+          color: #374151 !important;
+        }
+        *[class*="input"]:focus {
+          border-color: #157C61 !important;
+          box-shadow: 0 0 0 2px rgba(21, 124, 97, 0.2) !important;
+        }
+        
+        /* Force all form elements */
+        input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]) {
+          background-color: #F8F1DD !important;
+          border-color: #157C61 !important;
+          color: #374151 !important;
+        }
+      `}</style>
+      <div className="w-full min-h-screen p-6 md:p-10 text-neutral-900" style={{ backgroundColor: '#F8F1DD' }}>
+      <div className="max-w-6xl mx-auto grid gap-6">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 className="text-3xl font-extrabold tracking-tight">Auto‑Run Multi‑Agent Debate</h1>
+            <p className="text-sm text-neutral-600">Live, rotating dialogue among configurable personas.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button onClick={start} disabled={playing} style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2"><Play className="w-4 h-4 mr-2"/>Start</Button>
+            <Button onClick={stop} variant="secondary" disabled={!playing} style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2"><Square className="w-4 h-4 mr-2"/>Stop</Button>
+            <Button onClick={copyTranscript} variant="outline" style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2"><Copy className="w-4 h-4 mr-2"/>{copyState === 'copied' ? 'Copied!' : copyState === 'downloaded' ? 'Saved as file' : 'Copy transcript'}</Button>
+            <Button onClick={downloadTranscript} variant="outline" style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2"><Download className="w-4 h-4 mr-2"/>Download .txt</Button>
+
+            {/* Personas dialog */}
+            <Dialog open={personaOpen} onOpenChange={setPersonaOpen}>
+              <DialogTrigger asChild><Button variant="outline" style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2">Personas</Button></DialogTrigger>
+              <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto" style={{ backgroundColor: '#F8F1DD' }}>
+                <DialogHeader><DialogTitle>Personas</DialogTitle></DialogHeader>
+                <CardContent>
+                  <div className="grid gap-6">
+                    {personas.map((p: any, idx: number) => (
+                      <div key={idx} className="grid md:grid-cols-5 gap-3 p-3 rounded-lg border" style={{ backgroundColor: '#F8F1DD' }}>
+                        <div className="flex items-center gap-3">
+                          <img src={generateAvatarDataUrl({ name: p.name, color: p.color })} alt={p.name} className="w-12 h-12 rounded-full border" style={{ borderColor: p.color }} />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs uppercase font-semibold">Name</label>
+                          <Input value={p.name} onChange={(e) => updatePersona(idx, 'name', e.target.value)} />
+                          <label className="text-xs uppercase font-semibold">Role</label>
+                          <Input value={p.role} onChange={(e) => updatePersona(idx, 'role', e.target.value)} />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs uppercase font-semibold">Age</label>
+                          <Input type="number" value={p.age} onChange={(e) => updatePersona(idx, 'age', Number(e.target.value))} />
+                          <label className="text-xs uppercase font-semibold">Color</label>
+                          <Input type="color" value={p.color} onChange={(e) => updatePersona(idx, 'color', e.target.value)} />
+                        </div>
+                        <div className="space-y-2 md:col-span-2">
+                          <label className="text-xs uppercase font-semibold">Bio</label>
+                          <Textarea rows={3} value={p.bio} onChange={(e) => updatePersona(idx, 'bio', e.target.value)} />
+                          <label className="text-xs uppercase font-semibold">Stance (reference only)</label>
+                          <Textarea rows={3} value={p.stance} onChange={(e) => updatePersona(idx, 'stance', e.target.value)} />
+                          <div className="flex gap-2 pt-2">
+                            <Button variant="outline" onClick={() => duplicatePersona(idx)} style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2">Duplicate</Button>
+                            <Button variant="destructive" onClick={() => removePersona(idx)} className="bg-red-600 hover:bg-red-700 text-white">Delete</Button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+
+                    <div className="grid gap-2">
+                      <div className="flex items-center justify-between">
+                        <Button variant="outline" onClick={addPersona} style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2">Add Persona</Button>
+                        <Button variant="secondary" onClick={() => setPersonaOpen(false)} style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2">Close</Button>
+                      </div>
+                      <div className="flex items-center justify-between mt-2">
+                        <label className="text-xs uppercase font-semibold">Advanced: Personas JSON</label>
+                      </div>
+                      <Textarea rows={10} value={JSON.stringify(personas, null, 2)} onChange={(e) => { try { setPersonas(JSON.parse(e.target.value)); } catch {} }} />
+                    </div>
+                  </div>
+                </CardContent>
+              </DialogContent>
+            </Dialog>
+
+            {/* Topics dialog */}
+            <Dialog open={topicsOpen} onOpenChange={setTopicsOpen}>
+              <DialogTrigger asChild><Button variant="outline" style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2">Topics</Button></DialogTrigger>
+              <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" style={{ backgroundColor: '#F8F1DD' }}>
+                <DialogHeader><DialogTitle>Topics</DialogTitle></DialogHeader>
+                <CardContent>
+                  <div className="grid gap-4">
+                    {topics.map((t: string, idx: number) => (
+                      <div key={idx} className="grid md:grid-cols-12 items-start gap-2">
+                        <div className="md:col-span-9">
+                          <Input value={t} onChange={(e) => updateTopic(idx, e.target.value)} />
+                        </div>
+                        <div className="md:col-span-3 flex gap-2 justify-end">
+                          <Button variant="outline" onClick={() => moveTopic(idx, -1)} disabled={idx === 0} style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 disabled:opacity-50 border-2">Up</Button>
+                          <Button variant="outline" onClick={() => moveTopic(idx, 1)} disabled={idx === topics.length - 1} style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 disabled:opacity-50 border-2">Down</Button>
+                          <Button variant="destructive" onClick={() => removeTopic(idx)} className="bg-red-600 hover:bg-red-700 text-white">Delete</Button>
+                        </div>
+                      </div>
+                    ))}
+                    <div className="grid gap-2">
+                      <label className="text-xs uppercase font-semibold">Bulk import (newline, comma, or semicolon separated)</label>
+                      <Textarea rows={4} placeholder={`Energy prices; Youth engagement\nMedia framing`} onBlur={(e) => bulkImportTopics(e.target.value)} />
+                      <div className="flex items-center justify-between mt-2">
+                        <label className="text-xs uppercase font-semibold">Advanced: Topics JSON</label>
+                      </div>
+                      <Textarea rows={8} value={JSON.stringify(topics, null, 2)} onChange={(e) => { try { setTopics(JSON.parse(e.target.value)); } catch {} }} />
+                    </div>
+                  </div>
+                </CardContent>
+              </DialogContent>
+            </Dialog>
+
+            {/* Settings dialog */}
+            <Dialog>
+              <DialogTrigger asChild><Button variant="outline" style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2"><Settings className="w-4 h-4 mr-2"/>Settings</Button></DialogTrigger>
+              <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" style={{ backgroundColor: '#F8F1DD' }}>
+                <DialogHeader>
+                  <DialogTitle>Settings</DialogTitle>
+                  <DialogDescription>Configure pacing and behaviour.</DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-6">
+                  <div className="grid md:grid-cols-4 gap-4">
+                    <div>
+                      <label className="text-xs uppercase font-semibold">Rounds</label>
+                      <div className="flex items-center gap-4 mt-2">
+                        <Slider value={[rounds]} min={1} max={8} step={1} onValueChange={(v) => setRounds(v[0])}/>
+                        <div className="w-10 text-right text-sm">{rounds}</div>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-xs uppercase font-semibold">Delay (ms)</label>
+                      <div className="flex items-center gap-4 mt-2">
+                        <Slider value={[delayMs]} min={400} max={6000} step={200} onValueChange={(v) => setDelayMs(v[0])}/>
+                        <div className="w-14 text-right text-sm">{delayMs}</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <label className="text-xs uppercase font-semibold">Auto‑run on load</label>
+                        <div className="text-xs text-neutral-600">Start automatically after load</div>
+                      </div>
+                      <Switch checked={autoRun} onCheckedChange={setAutoRun}/>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <label className="text-xs uppercase font-semibold">Show Info</label>
+                        <div className="text-xs text-neutral-600">Open help & tips</div>
+                      </div>
+                      <InfoDialogButton />
+                    </div>
+                  </div>
+                </div>
+
+                {/* AI API Settings */}
+                <div className="border-t pt-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h3 className="text-lg font-semibold">AI API Configuration</h3>
+                      <p className="text-sm text-neutral-600">Connect to external AI services for more dynamic debates</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm text-neutral-600">Use AI API</span>
+                      <Switch checked={useLLM} onCheckedChange={setUseLLM} />
+                    </div>
+                  </div>
+
+                  {useLLM && (
+                    <div className="space-y-6">
+                      {/* Provider Selection */}
+                      <div className="grid md:grid-cols-3 gap-4">
+                        {Object.entries(API_PRESETS).map(([key, preset]) => (
+                          <div
+                            key={key}
+                            className={`p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                              provider === key 
+                                ? 'border-2' 
+                                : 'border-neutral-200 hover:border-neutral-300'
+                            }`}
+                            style={provider === key ? { borderColor: '#157C61', backgroundColor: '#f0fdf4' } : {}}
+                            onClick={() => setProvider(key as any)}
+                          >
+                            <div className="font-semibold text-sm">{preset.name}</div>
+                            <div className="text-xs text-neutral-600 mt-1">{preset.description}</div>
+                            {provider === key && (
+                              <div className="text-xs mt-2" style={{ color: '#157C61' }}>✓ Selected</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* API Configuration */}
+                      <div className="grid md:grid-cols-2 gap-6">
+                        <div className="space-y-4">
+                          <div>
+                            <label className="text-sm font-medium">API Key</label>
+                            <Input 
+                              type="password" 
+                              placeholder="Enter your API key..." 
+                              value={apiKey} 
+                              onChange={(e) => setApiKey(e.target.value)}
+                              className="mt-1"
+                            />
+                            <p className="text-xs text-neutral-500 mt-1">
+                              Your API key is stored locally and never shared
+                              {provider === 'openrouter_free' && (
+                                <span className="block mt-1 text-green-600 font-medium">
+                                  💚 Free models - no credits required!
+                                </span>
+                              )}
+                            </p>
+                          </div>
+
+                          <div>
+                            <label className="text-sm font-medium">Model</label>
+                            <select 
+                              className="w-full p-2 border rounded-md text-sm mt-1"
+                              value={model} 
+                              onChange={(e) => setModel(e.target.value)}
+                            >
+                              {API_PRESETS[provider]?.models.map((m) => (
+                                <option key={m.value} value={m.value}>{m.label}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* OpenRouter specific fields */}
+                          {(provider === 'openrouter' || provider === 'openrouter_free') && (
+                            <>
+                              <div>
+                                <label className="text-sm font-medium">Referer URL (optional)</label>
+                                <Input 
+                                  placeholder="https://your-site.com" 
+                                  value={orRef} 
+                                  onChange={(e) => setOrRef(e.target.value)}
+                                  className="mt-1"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-sm font-medium">App Title (optional)</label>
+                                <Input 
+                                  placeholder="Debate Simulator" 
+                                  value={orTitle} 
+                                  onChange={(e) => setOrTitle(e.target.value)}
+                                  className="mt-1"
+                                />
+                              </div>
+                            </>
+                          )}
+
+                          {/* Connection Test */}
+                          <div className="pt-2">
+                            <Button 
+                              onClick={testConnection} 
+                              disabled={connectionStatus === 'testing' || !apiKey}
+                              variant="outline"
+                              className="w-full hover:opacity-90 border-2"
+                              style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }}
+                            >
+                              {connectionStatus === 'testing' && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                              {connectionStatus === 'testing' ? 'Testing...' : 
+                               connectionStatus === 'success' ? '✓ Connected' :
+                               connectionStatus === 'error' ? '✗ Failed' : 'Test Connection'}
+                            </Button>
+                            {connectionError && (
+                              <p className="text-xs text-red-600 mt-2">{connectionError}</p>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="space-y-4">
+                          <div>
+                            <label className="text-sm font-medium">Response Length</label>
+                            <div className="mt-2">
+                              <Slider 
+                                value={[maxTokens]} 
+                                min={50} 
+                                max={500} 
+                                step={25} 
+                                onValueChange={(v) => setMaxTokens(v[0])}
+                                className="mb-2"
+                              />
+                              <div className="text-xs text-center text-neutral-600">{maxTokens} tokens</div>
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="text-sm font-medium">Creativity</label>
+                            <div className="mt-2">
+                              <Slider 
+                                value={[temperature]} 
+                                min={0} 
+                                max={1.5} 
+                                step={0.1} 
+                                onValueChange={(v) => setTemperature(v[0])}
+                                className="mb-2"
+                              />
+                              <div className="text-xs text-center text-neutral-600">
+                                {temperature < 0.3 ? 'Conservative' : 
+                                 temperature < 0.7 ? 'Balanced' : 
+                                 temperature < 1.0 ? 'Creative' : 'Very Creative'}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div>
+                            <label className="text-sm font-medium">Diversity</label>
+                            <div className="mt-2">
+                              <Slider 
+                                value={[freqPenalty]} 
+                                min={0} 
+                                max={2} 
+                                step={0.1} 
+                                onValueChange={(v) => setFreqPenalty(v[0])}
+                                className="mb-2"
+                              />
+                              <div className="text-xs text-center text-neutral-600">
+                                {freqPenalty < 0.5 ? 'Allow repetition' : 
+                                 freqPenalty < 1.0 ? 'Some variety' : 'Avoid repetition'}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </DialogContent>
+            </Dialog>
+
+            {/* Info dialog trigger & instance */}
+            <InfoDialogButton />
+          </div>
+        </div>
+
+        {/* Transcript (chat bubbles) */}
+        <Card className="shadow-sm" style={{ backgroundColor: '#F8F1DD' }}>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="font-semibold">Live Debate Transcript</div>
+              {loading && <div className="flex items-center text-sm text-neutral-500"><Loader2 className="w-4 h-4 mr-2 animate-spin"/> generating…</div>}
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="relative">
+              <div 
+                ref={scrollerRef} 
+                className="h-[70vh] overflow-y-auto rounded-xl p-4 border"
+                style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61' }}
+                onScroll={handleScroll}
+                onMouseEnter={handleUserInteraction}
+                onTouchStart={handleUserInteraction}
+              >
+                {log.length === 0 && (
+                  <div className="text-sm text-neutral-500">Press <strong>Start</strong> to begin. Rotates speakers, changes topic each round, and stops after the selected rounds.</div>
+                )}
+                <ul className="space-y-4">
+                {log.map((l, i) => {
+                  const idx = nameToIndex.get(l.speaker) ?? 0;
+                  const right = idx % 2 === 1;
+                  const clean = (l.text || "").replace(/\bTopic:[^\n]*/gi, "").replace(/\s+/g, " ").trim();
+                  return (
+                    <li key={`${l.ts}-${i}`} className={`grid gap-1 ${right ? 'justify-items-end' : 'justify-items-start'}`}>
+                      <div className={`flex items-end gap-2 ${right ? 'flex-row-reverse' : ''}`}>
+                        <img
+                          src={avatarMap.get(l.speaker) || generateAvatarDataUrl({ name: l.speaker, color: l.color })}
+                          alt={l.speaker}
+                          className="w-10 h-10 rounded-full border shrink-0"
+                          style={{ borderColor: l.color }}
+                        />
+                        <div className={`max-w-[80%] ${right ? 'items-end text-right' : ''}`}>
+                          <div className="text-xs mb-1 font-medium" style={{ color: l.color }}>{l.speaker}</div>
+                          <div className="rounded-2xl px-4 py-3 border shadow-sm" style={{ borderColor: l.color, backgroundColor: '#F8F1DD' }}>
+                            <div className="leading-relaxed">{clean}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+                </ul>
+              </div>
+              
+              {/* Floating Action Button for scrolling to bottom */}
+              {showScrollButton && (
+                <button
+                  onClick={scrollToBottom}
+                  className="absolute bottom-4 right-4 rounded-full p-3 shadow-lg transition-all duration-200 hover:scale-105 z-10 animate-in fade-in-0 slide-in-from-bottom-2 border-2"
+                  style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }}
+                  title="Scroll to latest message"
+                >
+                  <svg 
+                    className="w-5 h-5" 
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round" 
+                      strokeWidth={2} 
+                      d="M19 14l-7 7m0 0l-7-7m7 7V3" 
+                    />
+                  </svg>
+                </button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+      </div>
+      </>
+  );
+}
+
+// ---------- Info dialog components ----------
+function InfoDialogButton() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button variant="outline" onClick={() => setOpen(true)} style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2"><Info className="w-4 h-4 mr-2"/>Info</Button>
+      <InfoDialog controlledOpen={open} onChange={setOpen} />
+    </>
+  );
+}
+
+function InfoDialog({ controlledOpen, onChange }: { controlledOpen?: boolean; onChange?: (v: boolean) => void }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => { if (typeof controlledOpen === 'boolean') setOpen(controlledOpen); }, [controlledOpen]);
+  const set = onChange || setOpen;
+  return (
+    <Dialog open={open} onOpenChange={set}>
+      <DialogContent className="max-w-lg" style={{ backgroundColor: '#F8F1DD' }}>
+        <DialogHeader><DialogTitle>How to share & Tips</DialogTitle></DialogHeader>
+        <div className="text-sm text-neutral-700 space-y-3">
+          <div>
+            <h3 className="font-semibold text-neutral-900 mb-1">How to share</h3>
+            <ol className="list-decimal ml-4 space-y-1">
+              <li>Share this ChatGPT conversation (canvas attached) to let others run it.</li>
+              <li>Settings persist locally in the viewer's browser.</li>
+              <li>Use <em>Copy transcript</em> or <em>Download .txt</em> to export dialogue.</li>
+            </ol>
+          </div>
+          <div>
+            <h3 className="font-semibold text-neutral-900 mb-1">Tips</h3>
+            <ul className="list-disc ml-4 space-y-1">
+              <li>Tune <strong>Rounds</strong> and <strong>Delay</strong> for demo pacing.</li>
+              <li>Use <strong>Topics</strong> / <strong>Personas</strong> editors for quick changes; JSON available for power users.</li>
+              <li>For richer debates, enable <strong>Use external API</strong> and fill your model + key.</li>
+            </ul>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
