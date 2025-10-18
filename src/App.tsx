@@ -857,31 +857,37 @@ Write ONLY the persona's next message.`;
           color: #374151 !important;
         }
       `}</style>
-      <div className="w-full min-h-screen p-6 md:p-10 text-neutral-900" style={{ backgroundColor: '#F8F1DD' }}>
-      <div className="max-w-6xl mx-auto grid gap-6">
+      <div className="w-full min-h-screen p-3 sm:p-6 md:p-10 text-neutral-900" style={{ backgroundColor: '#F8F1DD' }}>
+      <div className="max-w-6xl mx-auto grid gap-4 sm:gap-6">
         {/* Header */}
         <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div>
-            <h1 className="text-3xl font-extrabold tracking-tight">Auto‑Run Multi‑Agent Debate</h1>
+          <div className="min-w-0 flex-1">
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Auto‑Run Multi‑Agent Debate</h1>
             <p className="text-sm text-neutral-600">Live, rotating dialogue among configurable personas.</p>
           </div>
-          <div className="flex items-center gap-2">
-            <Button onClick={start} disabled={playing} style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2"><Play className="w-4 h-4 mr-2"/>Start</Button>
-            <Button onClick={stop} variant="secondary" disabled={!playing} style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2"><Square className="w-4 h-4 mr-2"/>Stop</Button>
-            <Button onClick={copyTranscript} variant="outline" style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2"><Copy className="w-4 h-4 mr-2"/>{copyState === 'copied' ? 'Copied!' : copyState === 'downloaded' ? 'Saved as file' : 'Copy transcript'}</Button>
-            <Button onClick={downloadTranscript} variant="outline" style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2"><Download className="w-4 h-4 mr-2"/>Download .txt</Button>
+          <div className="flex items-center gap-1 sm:gap-2 flex-wrap">
+            <Button onClick={start} disabled={playing} style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2 text-xs sm:text-sm px-2 sm:px-4"><Play className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2"/>Start</Button>
+            <Button onClick={stop} variant="secondary" disabled={!playing} style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2 text-xs sm:text-sm px-2 sm:px-4"><Square className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2"/>Stop</Button>
+            <Button onClick={copyTranscript} variant="outline" style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2 text-xs sm:text-sm px-2 sm:px-4 hidden sm:flex"><Copy className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2"/>{copyState === 'copied' ? 'Copied!' : copyState === 'downloaded' ? 'Saved as file' : 'Copy transcript'}</Button>
+            <Button onClick={downloadTranscript} variant="outline" style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2 text-xs sm:text-sm px-2 sm:px-4 hidden sm:flex"><Download className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2"/>Download .txt</Button>
+            
+            {/* Mobile floating action buttons */}
+            <div className="flex sm:hidden gap-2">
+              <Button onClick={copyTranscript} variant="outline" style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2 text-xs px-2"><Copy className="w-3 h-3"/></Button>
+              <Button onClick={downloadTranscript} variant="outline" style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2 text-xs px-2"><Download className="w-3 h-3"/></Button>
+            </div>
 
             {/* Personas dialog */}
             <Dialog open={personaOpen} onOpenChange={setPersonaOpen}>
               <DialogTrigger asChild><Button variant="outline" style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2">Personas</Button></DialogTrigger>
-              <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto" style={{ backgroundColor: '#F8F1DD' }}>
+              <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto w-[95vw] sm:w-full" style={{ backgroundColor: '#F8F1DD' }}>
                 <DialogHeader><DialogTitle>Personas</DialogTitle></DialogHeader>
                 <CardContent>
                   <div className="grid gap-6">
                     {personas.map((p: any, idx: number) => (
-                      <div key={idx} className="grid md:grid-cols-5 gap-3 p-3 rounded-lg border" style={{ backgroundColor: '#F8F1DD' }}>
-                        <div className="flex items-center gap-3">
-                          <img src={generateAvatarDataUrl({ name: p.name, color: p.color })} alt={p.name} className="w-12 h-12 rounded-full border" style={{ borderColor: p.color }} />
+                      <div key={idx} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 p-3 rounded-lg border" style={{ backgroundColor: '#F8F1DD' }}>
+                        <div className="flex items-center gap-3 sm:col-span-2 lg:col-span-1">
+                          <img src={generateAvatarDataUrl({ name: p.name, color: p.color })} alt={p.name} className="w-10 h-10 sm:w-12 sm:h-12 rounded-full border" style={{ borderColor: p.color }} />
                         </div>
                         <div className="space-y-2">
                           <label className="text-xs uppercase font-semibold">Name</label>
@@ -895,7 +901,7 @@ Write ONLY the persona's next message.`;
                           <label className="text-xs uppercase font-semibold">Color</label>
                           <Input type="color" value={p.color} onChange={(e) => updatePersona(idx, 'color', e.target.value)} />
                         </div>
-                        <div className="space-y-2 md:col-span-2">
+                        <div className="space-y-2 sm:col-span-2 lg:col-span-2">
                           <label className="text-xs uppercase font-semibold">Bio</label>
                           <Textarea rows={3} value={p.bio} onChange={(e) => updatePersona(idx, 'bio', e.target.value)} />
                           <label className="text-xs uppercase font-semibold">Stance (reference only)</label>
@@ -958,13 +964,13 @@ Write ONLY the persona's next message.`;
             {/* Settings dialog */}
             <Dialog>
               <DialogTrigger asChild><Button variant="outline" style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }} className="hover:opacity-90 border-2"><Settings className="w-4 h-4 mr-2"/>Settings</Button></DialogTrigger>
-              <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto" style={{ backgroundColor: '#F8F1DD' }}>
+              <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto w-[95vw] sm:w-full" style={{ backgroundColor: '#F8F1DD' }}>
                 <DialogHeader>
                   <DialogTitle>Settings</DialogTitle>
                   <DialogDescription>Configure pacing and behaviour.</DialogDescription>
                 </DialogHeader>
-                <div className="grid gap-6">
-                  <div className="grid md:grid-cols-4 gap-4">
+                <div className="grid gap-4 sm:gap-6">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div>
                       <label className="text-xs uppercase font-semibold">Rounds</label>
                       <div className="flex items-center gap-4 mt-2">
@@ -1199,7 +1205,7 @@ Write ONLY the persona's next message.`;
             <div className="relative">
               <div 
                 ref={scrollerRef} 
-                className="h-[70vh] overflow-y-auto rounded-xl p-4 border"
+                className="h-[50vh] sm:h-[60vh] md:h-[70vh] overflow-y-auto rounded-xl p-2 sm:p-4 border"
                 style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61' }}
                 onScroll={handleScroll}
                 onMouseEnter={handleUserInteraction}
@@ -1240,7 +1246,7 @@ Write ONLY the persona's next message.`;
                           className="w-10 h-10 rounded-full border shrink-0"
                           style={{ borderColor: l.color }}
                         />
-                        <div className={`max-w-[80%] ${right ? 'items-end text-right' : ''}`}>
+                        <div className={`max-w-[85%] sm:max-w-[80%] ${right ? 'items-end text-right' : ''}`}>
                           <div className="text-xs mb-1 font-medium" style={{ color: l.color }}>{l.speaker}</div>
                           <div className="rounded-2xl px-4 py-3 border shadow-sm" style={{ borderColor: l.color, backgroundColor: '#F8F1DD' }}>
                             <div className="leading-relaxed">{clean}</div>
