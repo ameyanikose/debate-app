@@ -396,9 +396,9 @@ export default function App() {
   const [baseUrl, setBaseUrl] = useLocalStorage('debate_baseurl', '');
   const [model, setModel] = useLocalStorage('debate_model', 'deepseek/deepseek-chat');
   const [temperature, setTemperature] = useLocalStorage('debate_temp', 0.9);
-  const [topP, setTopP] = useLocalStorage('debate_top_p', 1);
+  const [topP] = useLocalStorage('debate_top_p', 1);
   const [freqPenalty, setFreqPenalty] = useLocalStorage('debate_freq_penalty', 0.6);
-  const [presPenalty, setPresPenalty] = useLocalStorage('debate_pres_penalty', 0.6);
+  const [presPenalty] = useLocalStorage('debate_pres_penalty', 0.6);
   const [maxTokens, setMaxTokens] = useLocalStorage('debate_max_tokens', 200);
   // OpenRouter optional headers
   const [orRef, setOrRef] = useLocalStorage('debate_or_referer', '');
