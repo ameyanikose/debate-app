@@ -34,7 +34,7 @@ function generateAvatarDataUrl({ name, color }: { name?: string; color?: string 
   const stroke = color || "#111827";
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'>
-  <circle cx='48' cy='48' r='46' fill='white' stroke='${stroke}' stroke-width='4'/>
+  <circle cx='48' cy='48' r='46' fill='#F8F1DD' stroke='${stroke}' stroke-width='4'/>
   <text x='50%' y='55%' dominant-baseline='middle' text-anchor='middle' font-family='Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial' font-size='34' fill='#111827'>${ini}</text>
 </svg>`;
   const encoded = encodeURIComponent(svg).replace(/'/g, "%27").replace(/\(/g, "%28").replace(/\)/g, "%29");
