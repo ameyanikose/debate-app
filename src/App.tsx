@@ -74,25 +74,45 @@ async function llmReply({
       headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({ model, system, messages: conv, max_tokens, temperature })
     });
-    if (!res.ok) throw new Error('Anthropic error ' + res.status);
+    if (!res.ok) {
+      let detail = '';
+      try {
+        const data = await res.clone().json();
+        detail = data?.error?.message || data?.message || '';
+      } catch {
+        try { detail = await res.text(); } catch {}
+      }
+      throw new Error(`Anthropic error ${res.status}${detail ? ': ' + String(detail).slice(0,300) : ''}`);
+    }
     const data = await res.json();
     const out = data?.content?.[0]?.text || data?.content || '';
     return String(out).trim();
   }
-  // OpenAI-compatible chat.completions (works for OpenRouter)
-  const url = (baseUrl?.trim() || 'https://api.openai.com/v1/chat/completions');
-  const body = { model, messages, temperature, top_p, frequency_penalty, presence_penalty, max_tokens };
-  const headers: Record<string,string> = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
-  if (/openrouter\.ai/i.test(url)) {
-    const fallbackRef = (typeof window !== 'undefined' && window.location?.origin) ? window.location.origin : '';
-    const fallbackTitle = (typeof document !== 'undefined' && document.title) ? document.title : 'Debate Simulator';
-    headers['HTTP-Referer'] = (referer && referer.trim()) || fallbackRef;
-    headers['X-Title'] = (appTitle && appTitle.trim()) || fallbackTitle;
-  }
-  const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
-  if (!res.ok) throw new Error('LLM error ' + res.status);
-  const data = await res.json();
-  return data?.choices?.[0]?.message?.content?.trim() || '';
+  // OpenAI SDK targeting OpenRouter (dynamic import to avoid type resolution issues)
+  const { default: OpenAI } = await import('openai');
+  const sdk = new OpenAI({
+    apiKey,
+    baseURL: (baseUrl?.trim() || 'https://openrouter.ai/api/v1'),
+    defaultHeaders: (() => {
+      const h: Record<string,string> = {};
+      const fallbackRef = (typeof window !== 'undefined' && window.location?.origin) ? window.location.origin : '';
+      const fallbackTitle = (typeof document !== 'undefined' && document.title) ? document.title : 'Debate Simulator';
+      h['HTTP-Referer'] = (referer && referer.trim()) || fallbackRef;
+      h['X-Title'] = (appTitle && appTitle.trim()) || fallbackTitle;
+      return h;
+    })()
+  });
+
+  const completion = await sdk.chat.completions.create({
+    model,
+    messages,
+    temperature,
+    top_p,
+    frequency_penalty,
+    presence_penalty,
+    max_tokens
+  });
+  return completion?.choices?.[0]?.message?.content?.trim() || '';
 }
 
 // ---------- Defaults ----------
@@ -452,7 +472,8 @@ export default function App() {
   // External LLM wiring
   const [useLLM, setUseLLM] = useLocalStorage('debate_use_llm', true);
   const [provider, setProvider] = useLocalStorage<'openai'|'anthropic'|'openrouter'|'openrouter_free'>('debate_provider', config.defaultProvider);
-  const [apiKey, setApiKey] = useLocalStorage('debate_api_key', config.backendApiKey);
+  // Store only user override locally. If empty, we fall back to backend key.
+  const [userApiKey, setUserApiKey] = useLocalStorage('debate_api_key', '');
   const [baseUrl, setBaseUrl] = useLocalStorage('debate_baseurl', '');
   const [model, setModel] = useLocalStorage('debate_model', config.defaultModel);
   const [temperature, setTemperature] = useLocalStorage('debate_temp', 0.9);
@@ -464,6 +485,9 @@ export default function App() {
   const [orRef, setOrRef] = useLocalStorage('debate_or_referer', '');
   const [orTitle, setOrTitle] = useLocalStorage('debate_or_title', 'Debate Simulator');
   const memoryRef = useRef<{[name:string]: string[]}>({});
+  // Effective API key used for requests
+  const effectiveApiKey = (userApiKey && userApiKey.trim()) ? userApiKey.trim() : (config.backendApiKey || '');
+
 
   const [playing, setPlaying] = useState(false);
   const [log, setLog] = useState<Array<{ speaker: string; color: string; text: string; ts: number }>>([]);
@@ -544,7 +568,7 @@ export default function App() {
 
   // Connection testing function
   async function testConnection() {
-    if (!apiKey || !model) {
+    if (!effectiveApiKey || !model) {
       setConnectionError("Please enter API key and select a model");
       setConnectionStatus("error");
       return;
@@ -561,7 +585,7 @@ export default function App() {
 
       const response = await llmReply({
         provider: (provider === 'openrouter' || provider === 'openrouter_free') ? 'openai' : provider,
-        apiKey,
+        apiKey: effectiveApiKey,
         baseUrl,
         model,
         messages: testMessages,
@@ -671,7 +695,7 @@ export default function App() {
     setLoading(true);
     let text = '';
     try {
-      if (useLLM && apiKey && model) {
+      if (useLLM && effectiveApiKey && model) {
         const history = log.slice(-8).map(l => `${l.speaker}: ${l.text}`).join(String.fromCharCode(10));
         const system = `You orchestrate a lively debate. Each reply MUST:
 - Be 2–4 sentences, conversational and varied (no formulaic openers).
@@ -687,7 +711,7 @@ ${history}
 Write ONLY the persona's next message.`;
         text = await llmReply({ 
           provider: (provider === 'openrouter' || provider === 'openrouter_free') ? 'openai' : provider, 
-          apiKey, baseUrl, model, temperature, top_p: topP, frequency_penalty: freqPenalty, presence_penalty: presPenalty, max_tokens: maxTokens, referer: orRef, appTitle: orTitle, messages: [
+          apiKey: effectiveApiKey, baseUrl, model, temperature, top_p: topP, frequency_penalty: freqPenalty, presence_penalty: presPenalty, max_tokens: maxTokens, referer: orRef, appTitle: orTitle, messages: [
           { role: 'system', content: system },
           { role: 'user', content: userMsg }
         ]});
@@ -1178,24 +1202,24 @@ Write ONLY the persona's next message.`;
                             <label className="text-sm font-medium">API Key</label>
                             <Input 
                               type="password" 
-                              placeholder="Enter your API key..." 
-                              value={apiKey} 
-                              onChange={(e) => setApiKey(e.target.value)}
+                              placeholder="Enter your API key (optional override)" 
+                              value={userApiKey} 
+                              onChange={(e) => setUserApiKey(e.target.value)}
                               className="mt-1"
                             />
                             <p className="text-xs text-neutral-500 mt-1">
-                              Your API key is stored locally and never shared
+                              Your override key is stored locally and never shared
                               {provider === 'openrouter_free' && (
                                 <span className="block mt-1 text-green-600 font-medium">
                                   💚 Free models - no credits required!
                                 </span>
                               )}
-                              {config.hasBackendApiKey() && apiKey === config.backendApiKey && (
+                              {config.hasBackendApiKey() && !userApiKey && (
                                 <span className="block mt-1 text-blue-600 font-medium">
                                   🔧 Using backend API key (demo mode)
                                 </span>
                               )}
-                              {!apiKey && !config.hasBackendApiKey() && (
+                              {!userApiKey && !config.hasBackendApiKey() && (
                                 <span className="block mt-1 text-amber-600 font-medium">
                                   ⚠️ Get your free API key from <a href="https://openrouter.ai" target="_blank" rel="noopener noreferrer" className="underline">OpenRouter.ai</a>
                                 </span>
@@ -1244,7 +1268,7 @@ Write ONLY the persona's next message.`;
                           <div className="pt-2">
                             <Button 
                               onClick={testConnection} 
-                              disabled={connectionStatus === 'testing' || !apiKey}
+                              disabled={connectionStatus === 'testing' || !effectiveApiKey}
                               variant="outline"
                               className="w-full hover:opacity-90 border-2"
                               style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }}
@@ -1346,7 +1370,7 @@ Write ONLY the persona's next message.`;
               {log.length === 0 && (
                 <div className="text-sm text-neutral-500">
                   Press <strong>Start</strong> to begin. Rotates speakers, changes topic each round, and stops after the selected rounds.
-                  {useLLM && !apiKey && !config.hasBackendApiKey() && (
+                  {useLLM && !effectiveApiKey && !config.hasBackendApiKey() && (
                     <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                       <div className="text-amber-800 font-medium">🤖 AI Mode Enabled</div>
                       <div className="text-amber-700 text-xs mt-1">
