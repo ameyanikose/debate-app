@@ -163,11 +163,15 @@ const DEFAULT_PERSONAS = [
 // ---------- OpenRouter Models ----------
 // Fallback static models in case API fails
 const FALLBACK_MODELS = [
-  // Free models
+  // Free models (verified working on OpenRouter)
   { value: "deepseek/deepseek-chat", label: "DeepSeek Chat (Free) - Recommended", category: "free" },
-  { value: "microsoft/phi-3-medium-128k-instruct", label: "Phi-3 Medium (Free)", category: "free" },
+  { value: "microsoft/phi-3-medium-128k-instruct", label: "Phi-3 Medium 128K (Free)", category: "free" },
+  { value: "microsoft/phi-3-mini-128k-instruct", label: "Phi-3 Mini 128K (Free)", category: "free" },
   { value: "meta-llama/llama-3.1-8b-instruct", label: "Llama 3.1 8B (Free)", category: "free" },
+  { value: "meta-llama/llama-3.2-3b-instruct", label: "Llama 3.2 3B (Free)", category: "free" },
+  { value: "meta-llama/llama-3.2-1b-instruct", label: "Llama 3.2 1B (Free)", category: "free" },
   { value: "google/gemini-flash-1.5", label: "Gemini Flash 1.5 (Free)", category: "free" },
+  { value: "google/gemini-flash-8b", label: "Gemini Flash 8B (Free)", category: "free" },
   { value: "mistralai/mistral-7b-instruct", label: "Mistral 7B (Free)", category: "free" },
   
   // Premium models
@@ -184,13 +188,44 @@ function categorizeModel(model: any): 'free' | 'premium' {
   const promptPrice = parseFloat(model.pricing?.prompt || '0');
   const completionPrice = parseFloat(model.pricing?.completion || '0');
   
+  // Known free models from OpenRouter
+  const knownFreeModels = [
+    'deepseek/deepseek-chat',
+    'microsoft/phi-3-medium-128k-instruct',
+    'meta-llama/llama-3.1-8b-instruct',
+    'google/gemini-flash-1.5',
+    'mistralai/mistral-7b-instruct',
+    'microsoft/phi-3-mini-128k-instruct',
+    'meta-llama/llama-3.1-70b-instruct',
+    'google/gemini-flash-8b',
+    'mistralai/mistral-7b-instruct:free',
+    'meta-llama/llama-3.2-3b-instruct',
+    'meta-llama/llama-3.2-1b-instruct',
+    'microsoft/phi-3-mini-4k-instruct',
+    'microsoft/phi-3-mini-128k-instruct:free',
+    'meta-llama/llama-3.1-8b-instruct:free',
+    'google/gemini-flash-1.5:free'
+  ];
+  
+  // Check if it's a known free model
+  if (knownFreeModels.includes(model.id)) {
+    return 'free';
+  }
+  
   // If both prompt and completion are free, it's a free model
   if (promptPrice === 0 && completionPrice === 0) {
     return 'free';
   }
   
-  // If pricing is very low (less than $0.001 per token), consider it free
-  if (promptPrice < 0.001 && completionPrice < 0.001) {
+  // If pricing is very low (less than $0.0001 per token), consider it free
+  if (promptPrice < 0.0001 && completionPrice < 0.0001) {
+    return 'free';
+  }
+  
+  // Check for models with "free" in the name or description
+  const modelName = (model.name || '').toLowerCase();
+  const modelId = (model.id || '').toLowerCase();
+  if (modelName.includes('free') || modelId.includes('free')) {
     return 'free';
   }
   
@@ -206,22 +241,38 @@ async function fetchOpenRouterModels() {
     }
     const data = await response.json();
     
-    return data.data.map((model: any) => ({
-      value: model.id,
-      label: `${model.name} (${categorizeModel(model) === 'free' ? 'Free' : 'Premium'})`,
-      category: categorizeModel(model),
-      description: model.description,
-      contextLength: model.context_length,
-      pricing: model.pricing
-    })).sort((a: any, b: any) => {
-      // Sort by category (free first) then by name
+    if (!data.data || !Array.isArray(data.data)) {
+      throw new Error('Invalid response format from OpenRouter API');
+    }
+    
+    const models = data.data.map((model: any) => {
+      const category = categorizeModel(model);
+      return {
+        value: model.id,
+        label: `${model.name} (${category === 'free' ? 'Free' : 'Premium'})`,
+        category: category,
+        description: model.description,
+        contextLength: model.context_length,
+        pricing: model.pricing
+      };
+    });
+    
+    // Sort by category (free first) then by name
+    models.sort((a: any, b: any) => {
       if (a.category !== b.category) {
         return a.category === 'free' ? -1 : 1;
       }
       return a.label.localeCompare(b.label);
     });
+    
+    console.log(`Loaded ${models.length} models from OpenRouter API`);
+    console.log(`Free models: ${models.filter((m: any) => m.category === 'free').length}`);
+    console.log(`Premium models: ${models.filter((m: any) => m.category === 'premium').length}`);
+    
+    return models;
   } catch (error) {
     console.warn('Failed to fetch models from OpenRouter API:', error);
+    console.log('Falling back to static model list');
     return FALLBACK_MODELS;
   }
 }
