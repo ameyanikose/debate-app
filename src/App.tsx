@@ -183,60 +183,71 @@ const DEFAULT_PERSONAS = [
   }
 ];
 
-// ---------- API Provider Presets ----------
-const API_PRESETS = {
-  openrouter_free: {
-    name: "OpenRouter (Free)",
-    baseUrl: "https://openrouter.ai/api/v1/chat/completions",
-    models: [
-      { value: "deepseek/deepseek-chat", label: "DeepSeek Chat (Free) - Recommended" },
-      { value: "microsoft/phi-3-medium-128k-instruct", label: "Phi-3 Medium (Free)" },
-      { value: "meta-llama/llama-3.1-8b-instruct", label: "Llama 3.1 8B (Free)" },
-      { value: "google/gemini-flash-1.5", label: "Gemini Flash 1.5 (Free)" },
-      { value: "mistralai/mistral-7b-instruct", label: "Mistral 7B (Free)" },
-    ],
-    needsReferer: true,
-    needsTitle: true,
-    description: "Free models - no credits required"
-  },
-  openrouter: {
-    name: "OpenRouter (Paid)",
-    baseUrl: "https://openrouter.ai/api/v1/chat/completions",
-    models: [
-      { value: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet (Premium)" },
-      { value: "openai/gpt-4o-mini", label: "GPT-4o Mini (Cost-effective)" },
-      { value: "meta-llama/llama-3.1-405b-instruct", label: "Llama 3.1 405B (Premium)" },
-      { value: "google/gemini-pro-1.5", label: "Gemini Pro 1.5 (Premium)" },
-    ],
-    needsReferer: true,
-    needsTitle: true,
-    description: "Premium models - requires credits"
-  },
-  openai: {
-    name: "OpenAI",
-    baseUrl: "https://api.openai.com/v1/chat/completions",
-    models: [
-      { value: "gpt-4o", label: "GPT-4o" },
-      { value: "gpt-4o-mini", label: "GPT-4o Mini" },
-      { value: "gpt-3.5-turbo", label: "GPT-3.5 Turbo" },
-    ],
-    needsReferer: false,
-    needsTitle: false,
-    description: "Official OpenAI API"
-  },
-  anthropic: {
-    name: "Anthropic",
-    baseUrl: "https://api.anthropic.com/v1/messages",
-    models: [
-      { value: "claude-3-5-sonnet-20241022", label: "Claude 3.5 Sonnet" },
-      { value: "claude-3-5-haiku-20241022", label: "Claude 3.5 Haiku" },
-      { value: "claude-3-opus-20240229", label: "Claude 3 Opus" },
-    ],
-    needsReferer: false,
-    needsTitle: false,
-    description: "Official Anthropic API"
+// ---------- OpenRouter Models ----------
+// Fallback static models in case API fails
+const FALLBACK_MODELS = [
+  // Free models
+  { value: "deepseek/deepseek-chat", label: "DeepSeek Chat (Free) - Recommended", category: "free" },
+  { value: "microsoft/phi-3-medium-128k-instruct", label: "Phi-3 Medium (Free)", category: "free" },
+  { value: "meta-llama/llama-3.1-8b-instruct", label: "Llama 3.1 8B (Free)", category: "free" },
+  { value: "google/gemini-flash-1.5", label: "Gemini Flash 1.5 (Free)", category: "free" },
+  { value: "mistralai/mistral-7b-instruct", label: "Mistral 7B (Free)", category: "free" },
+  
+  // Premium models
+  { value: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet (Premium)", category: "premium" },
+  { value: "openai/gpt-4o-mini", label: "GPT-4o Mini (Cost-effective)", category: "premium" },
+  { value: "openai/gpt-4o", label: "GPT-4o (Premium)", category: "premium" },
+  { value: "meta-llama/llama-3.1-405b-instruct", label: "Llama 3.1 405B (Premium)", category: "premium" },
+  { value: "google/gemini-pro-1.5", label: "Gemini Pro 1.5 (Premium)", category: "premium" },
+  { value: "anthropic/claude-3-5-haiku-20241022", label: "Claude 3.5 Haiku (Premium)", category: "premium" },
+];
+
+// Function to categorize models based on pricing
+function categorizeModel(model: any): 'free' | 'premium' {
+  const promptPrice = parseFloat(model.pricing?.prompt || '0');
+  const completionPrice = parseFloat(model.pricing?.completion || '0');
+  
+  // If both prompt and completion are free, it's a free model
+  if (promptPrice === 0 && completionPrice === 0) {
+    return 'free';
   }
-};
+  
+  // If pricing is very low (less than $0.001 per token), consider it free
+  if (promptPrice < 0.001 && completionPrice < 0.001) {
+    return 'free';
+  }
+  
+  return 'premium';
+}
+
+// Function to fetch models from OpenRouter API
+async function fetchOpenRouterModels() {
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/models');
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const data = await response.json();
+    
+    return data.data.map((model: any) => ({
+      value: model.id,
+      label: `${model.name} (${categorizeModel(model) === 'free' ? 'Free' : 'Premium'})`,
+      category: categorizeModel(model),
+      description: model.description,
+      contextLength: model.context_length,
+      pricing: model.pricing
+    })).sort((a: any, b: any) => {
+      // Sort by category (free first) then by name
+      if (a.category !== b.category) {
+        return a.category === 'free' ? -1 : 1;
+      }
+      return a.label.localeCompare(b.label);
+    });
+  } catch (error) {
+    console.warn('Failed to fetch models from OpenRouter API:', error);
+    return FALLBACK_MODELS;
+  }
+}
 
 const DEFAULT_TOPICS = [
   "What does activism mean to you personally?",
@@ -469,13 +480,9 @@ export default function App() {
   const [delayMs, setDelayMs] = useLocalStorage("debate_delay", 1500);
   const [autoRun, setAutoRun] = useLocalStorage("debate_autorun", true);
 
-  // External LLM wiring
+  // OpenRouter LLM configuration
   const [useLLM, setUseLLM] = useLocalStorage('debate_use_llm', true);
-  const [provider, setProvider] = useLocalStorage<'openai'|'anthropic'|'openrouter'|'openrouter_free'>('debate_provider', config.defaultProvider);
-  // Store only user override locally. If empty, we fall back to backend key.
-  const [userApiKey, setUserApiKey] = useLocalStorage('debate_api_key', '');
-  const [baseUrl, setBaseUrl] = useLocalStorage('debate_baseurl', '');
-  const [model, setModel] = useLocalStorage('debate_model', config.defaultModel);
+  const [model, setModel] = useLocalStorage('debate_model', 'deepseek/deepseek-chat');
   const [temperature, setTemperature] = useLocalStorage('debate_temp', 0.9);
   const [topP] = useLocalStorage('debate_top_p', 1);
   const [freqPenalty, setFreqPenalty] = useLocalStorage('debate_freq_penalty', 0.6);
@@ -485,8 +492,13 @@ export default function App() {
   const [orRef, setOrRef] = useLocalStorage('debate_or_referer', '');
   const [orTitle, setOrTitle] = useLocalStorage('debate_or_title', 'Debate Simulator');
   const memoryRef = useRef<{[name:string]: string[]}>({});
-  // Effective API key used for requests
-  const effectiveApiKey = (userApiKey && userApiKey.trim()) ? userApiKey.trim() : (config.backendApiKey || '');
+  // API key from environment variables
+  const effectiveApiKey = config.apiKey;
+  
+  // Dynamic model loading
+  const [availableModels, setAvailableModels] = useState(FALLBACK_MODELS);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState<string>('');
 
 
   const [playing, setPlaying] = useState(false);
@@ -511,6 +523,25 @@ export default function App() {
   }, [personas]);
 
   useEffect(() => { runSmokeTests(); }, []);
+  
+  // Load models from OpenRouter API on mount
+  useEffect(() => {
+    const loadModels = async () => {
+      setModelsLoading(true);
+      setModelsError('');
+      try {
+        const models = await fetchOpenRouterModels();
+        setAvailableModels(models);
+      } catch (error) {
+        setModelsError('Failed to load models from OpenRouter');
+        console.error('Error loading models:', error);
+      } finally {
+        setModelsLoading(false);
+      }
+    };
+    
+    loadModels();
+  }, []);
   
   // Smart auto-scroll: only scroll if user hasn't manually scrolled
   useEffect(() => { 
@@ -557,19 +588,18 @@ export default function App() {
     }
   };
 
-  // Update baseUrl and model when provider changes
-  useEffect(() => {
-    const preset = API_PRESETS[provider];
-    if (preset) {
-      setBaseUrl(preset.baseUrl);
-      setModel(preset.models[0].value);
-    }
-  }, [provider, setBaseUrl, setModel]);
+  // No need for provider-based updates since we only use OpenRouter
 
   // Connection testing function
   async function testConnection() {
-    if (!effectiveApiKey || !model) {
-      setConnectionError("Please enter API key and select a model");
+    if (!effectiveApiKey) {
+      setConnectionError("OpenRouter API key not configured. Please add VITE_OPENROUTER_API_KEY to your .env file");
+      setConnectionStatus("error");
+      return;
+    }
+
+    if (!model) {
+      setConnectionError("Please select a model");
       setConnectionStatus("error");
       return;
     }
@@ -584,9 +614,9 @@ export default function App() {
       ];
 
       const response = await llmReply({
-        provider: (provider === 'openrouter' || provider === 'openrouter_free') ? 'openai' : provider,
+        provider: 'openai', // Always use OpenAI SDK for OpenRouter
         apiKey: effectiveApiKey,
-        baseUrl,
+        baseUrl: config.openRouterUrl,
         model,
         messages: testMessages,
         temperature: 0.1,
@@ -710,11 +740,22 @@ Conversation so far:
 ${history}
 Write ONLY the persona's next message.`;
         text = await llmReply({ 
-          provider: (provider === 'openrouter' || provider === 'openrouter_free') ? 'openai' : provider, 
-          apiKey: effectiveApiKey, baseUrl, model, temperature, top_p: topP, frequency_penalty: freqPenalty, presence_penalty: presPenalty, max_tokens: maxTokens, referer: orRef, appTitle: orTitle, messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: userMsg }
-        ]});
+          provider: 'openai', // Always use OpenAI SDK for OpenRouter
+          apiKey: effectiveApiKey, 
+          baseUrl: config.openRouterUrl, 
+          model, 
+          temperature, 
+          top_p: topP, 
+          frequency_penalty: freqPenalty, 
+          presence_penalty: presPenalty, 
+          max_tokens: maxTokens, 
+          referer: orRef, 
+          appTitle: orTitle, 
+          messages: [
+            { role: 'system', content: system },
+            { role: 'user', content: userMsg }
+          ]
+        });
       } else {
         text = localReply({ topic, speaker, lastLine });
       }
@@ -1158,12 +1199,12 @@ Write ONLY the persona's next message.`;
                   </div>
                 </div>
 
-                {/* AI API Settings */}
+                {/* OpenRouter AI Settings */}
                 <div className="border-t pt-6">
                   <div className="flex items-center justify-between mb-4">
                     <div>
-                      <h3 className="text-lg font-semibold">AI API Configuration</h3>
-                      <p className="text-sm text-neutral-600">Connect to external AI services for more dynamic debates</p>
+                      <h3 className="text-lg font-semibold">OpenRouter AI Configuration</h3>
+                      <p className="text-sm text-neutral-600">Connect to OpenRouter for AI-powered debates with access to 200+ models</p>
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="text-sm text-neutral-600">Use AI API</span>
@@ -1173,55 +1214,27 @@ Write ONLY the persona's next message.`;
 
                   {useLLM && (
                     <div className="space-y-6">
-                      {/* Provider Selection */}
-                      <div className="grid md:grid-cols-3 gap-4">
-                        {Object.entries(API_PRESETS).map(([key, preset]) => (
-                          <div
-                            key={key}
-                            className={`p-4 border-2 rounded-lg cursor-pointer transition-all ${
-                              provider === key 
-                                ? 'border-2' 
-                                : 'border-neutral-200 hover:border-neutral-300'
-                            }`}
-                            style={provider === key ? { borderColor: '#157C61', backgroundColor: '#f0fdf4' } : {}}
-                            onClick={() => setProvider(key as any)}
-                          >
-                            <div className="font-semibold text-sm">{preset.name}</div>
-                            <div className="text-xs text-neutral-600 mt-1">{preset.description}</div>
-                            {provider === key && (
-                              <div className="text-xs mt-2" style={{ color: '#157C61' }}>✓ Selected</div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* API Configuration */}
+                      {/* OpenRouter Configuration */}
                       <div className="grid md:grid-cols-2 gap-6">
                         <div className="space-y-4">
                           <div>
-                            <label className="text-sm font-medium">API Key</label>
-                            <Input 
-                              type="password" 
-                              placeholder="Enter your API key (optional override)" 
-                              value={userApiKey} 
-                              onChange={(e) => setUserApiKey(e.target.value)}
-                              className="mt-1"
-                            />
+                            <label className="text-sm font-medium">API Key Status</label>
+                            <div className="mt-1 p-3 rounded-md border" style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61' }}>
+                              {config.hasApiKey() ? (
+                                <div className="text-green-700 font-medium">
+                                  ✅ OpenRouter API key configured
+                                </div>
+                              ) : (
+                                <div className="text-amber-700 font-medium">
+                                  ⚠️ OpenRouter API key not configured
+                                </div>
+                              )}
+                            </div>
                             <p className="text-xs text-neutral-500 mt-1">
-                              Your override key is stored locally and never shared
-                              {provider === 'openrouter_free' && (
-                                <span className="block mt-1 text-green-600 font-medium">
-                                  💚 Free models - no credits required!
-                                </span>
-                              )}
-                              {config.hasBackendApiKey() && !userApiKey && (
-                                <span className="block mt-1 text-blue-600 font-medium">
-                                  🔧 Using backend API key (demo mode)
-                                </span>
-                              )}
-                              {!userApiKey && !config.hasBackendApiKey() && (
+                              API key is stored in environment variables (.env file). 
+                              {!config.hasApiKey() && (
                                 <span className="block mt-1 text-amber-600 font-medium">
-                                  ⚠️ Get your free API key from <a href="https://openrouter.ai" target="_blank" rel="noopener noreferrer" className="underline">OpenRouter.ai</a>
+                                  Add VITE_OPENROUTER_API_KEY to your .env file and restart the dev server.
                                 </span>
                               )}
                             </p>
@@ -1229,46 +1242,68 @@ Write ONLY the persona's next message.`;
 
                           <div>
                             <label className="text-sm font-medium">Model</label>
-                            <select 
-                              className="w-full p-2 border rounded-md text-sm mt-1"
-                              value={model} 
-                              onChange={(e) => setModel(e.target.value)}
-                            >
-                              {API_PRESETS[provider]?.models.map((m) => (
-                                <option key={m.value} value={m.value}>{m.label}</option>
-                              ))}
-                            </select>
+                            {modelsLoading ? (
+                              <div className="w-full p-2 border rounded-md text-sm mt-1 flex items-center gap-2" style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61' }}>
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                Loading models from OpenRouter...
+                              </div>
+                            ) : (
+                              <select 
+                                className="w-full p-2 border rounded-md text-sm mt-1"
+                                value={model} 
+                                onChange={(e) => setModel(e.target.value)}
+                              >
+                                <optgroup label="Free Models">
+                                  {availableModels.filter(m => m.category === 'free').map((m) => (
+                                    <option key={m.value} value={m.value}>{m.label}</option>
+                                  ))}
+                                </optgroup>
+                                <optgroup label="Premium Models">
+                                  {availableModels.filter(m => m.category === 'premium').map((m) => (
+                                    <option key={m.value} value={m.value}>{m.label}</option>
+                                  ))}
+                                </optgroup>
+                              </select>
+                            )}
+                            {modelsError && (
+                              <p className="text-xs text-red-600 mt-1">{modelsError}</p>
+                            )}
+                            <p className="text-xs text-neutral-500 mt-1">
+                              {availableModels.find(m => m.value === model)?.category === 'free' ? 
+                                '💚 Free model - no credits required!' : 
+                                '💳 Premium model - requires credits'}
+                            </p>
+                            <p className="text-xs text-neutral-400 mt-1">
+                              {availableModels.length} models available from OpenRouter
+                            </p>
                           </div>
 
-                          {/* OpenRouter specific fields */}
-                          {(provider === 'openrouter' || provider === 'openrouter_free') && (
-                            <>
-                              <div>
-                                <label className="text-sm font-medium">Referer URL (optional)</label>
-                                <Input 
-                                  placeholder="https://your-site.com" 
-                                  value={orRef} 
-                                  onChange={(e) => setOrRef(e.target.value)}
-                                  className="mt-1"
-                                />
-                              </div>
-                              <div>
-                                <label className="text-sm font-medium">App Title (optional)</label>
-                                <Input 
-                                  placeholder="Debate Simulator" 
-                                  value={orTitle} 
-                                  onChange={(e) => setOrTitle(e.target.value)}
-                                  className="mt-1"
-                                />
-                              </div>
-                            </>
-                          )}
+                          <div>
+                            <label className="text-sm font-medium">Referer URL (optional)</label>
+                            <Input 
+                              placeholder="https://your-site.com" 
+                              value={orRef} 
+                              onChange={(e) => setOrRef(e.target.value)}
+                              className="mt-1"
+                            />
+                            <p className="text-xs text-neutral-500 mt-1">Helps OpenRouter track usage</p>
+                          </div>
+
+                          <div>
+                            <label className="text-sm font-medium">App Title (optional)</label>
+                            <Input 
+                              placeholder="Debate Simulator" 
+                              value={orTitle} 
+                              onChange={(e) => setOrTitle(e.target.value)}
+                              className="mt-1"
+                            />
+                          </div>
 
                           {/* Connection Test */}
                           <div className="pt-2">
                             <Button 
                               onClick={testConnection} 
-                              disabled={connectionStatus === 'testing' || !effectiveApiKey}
+                              disabled={connectionStatus === 'testing' || !effectiveApiKey || !model}
                               variant="outline"
                               className="w-full hover:opacity-90 border-2"
                               style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }}
@@ -1280,6 +1315,9 @@ Write ONLY the persona's next message.`;
                             </Button>
                             {connectionError && (
                               <p className="text-xs text-red-600 mt-2">{connectionError}</p>
+                            )}
+                            {!effectiveApiKey && (
+                              <p className="text-xs text-amber-600 mt-2">Backend API key required for testing</p>
                             )}
                           </div>
                         </div>
@@ -1370,19 +1408,19 @@ Write ONLY the persona's next message.`;
               {log.length === 0 && (
                 <div className="text-sm text-neutral-500">
                   Press <strong>Start</strong> to begin. Rotates speakers, changes topic each round, and stops after the selected rounds.
-                  {useLLM && !effectiveApiKey && !config.hasBackendApiKey() && (
+                  {useLLM && !effectiveApiKey && (
                     <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                       <div className="text-amber-800 font-medium">🤖 AI Mode Enabled</div>
                       <div className="text-amber-700 text-xs mt-1">
-                        Add your OpenRouter API key in Settings to use AI-powered debates, or disable AI mode to use local generation.
+                        OpenRouter API key not configured. Add VITE_OPENROUTER_API_KEY to your .env file and restart the dev server, or disable AI mode to use local generation.
                       </div>
                     </div>
                   )}
-                  {useLLM && config.hasBackendApiKey() && (
-                    <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                      <div className="text-blue-800 font-medium">🤖 AI Mode Enabled (Demo)</div>
-                      <div className="text-blue-700 text-xs mt-1">
-                        Using backend API key for AI-powered debates. You can add your own key in Settings for personal use.
+                  {useLLM && effectiveApiKey && (
+                    <div className="mt-2 p-3 bg-green-50 border border-green-200 rounded-lg">
+                      <div className="text-green-800 font-medium">🤖 AI Mode Enabled</div>
+                      <div className="text-green-700 text-xs mt-1">
+                        Using OpenRouter API key for AI-powered debates. Select your preferred model in Settings.
                       </div>
                     </div>
                   )}
@@ -1484,7 +1522,7 @@ function InfoDialog({ controlledOpen, onChange }: { controlledOpen?: boolean; on
             <ul className="list-disc ml-4 space-y-1">
               <li>Tune <strong>Rounds</strong> and <strong>Delay</strong> for demo pacing.</li>
               <li>Use <strong>Topics</strong> / <strong>Personas</strong> editors for quick changes; JSON available for power users.</li>
-              <li>For richer debates, enable <strong>Use external API</strong> and fill your model + key.</li>
+              <li>For richer debates, enable <strong>Use AI API</strong> and add your OpenRouter API key.</li>
             </ul>
           </div>
         </div>
