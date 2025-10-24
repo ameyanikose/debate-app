@@ -41,11 +41,8 @@ function generateAvatarDataUrl({ name, color }: { name?: string; color?: string 
   return `data:image/svg+xml;charset=UTF-8,${encoded}`;
 }
 
-// ---------- LLM integration (optional external APIs) ----------
+// ---------- LLM integration via backend proxy ----------
 async function llmReply({
-  provider,
-  apiKey,
-  baseUrl,
   model,
   messages,
   temperature = 0.9,
@@ -56,63 +53,38 @@ async function llmReply({
   referer,
   appTitle,
 }: {
-  provider: 'openai' | 'anthropic';
-  apiKey: string;
-  baseUrl?: string;
   model: string;
   messages: Array<{ role: 'system'|'user'|'assistant'; content: string }>;
   temperature?: number; top_p?: number; frequency_penalty?: number; presence_penalty?: number; max_tokens?: number;
   referer?: string; appTitle?: string;
 }) {
-  const p = provider || 'openai';
-  if (p === 'anthropic') {
-    const url = (baseUrl?.trim() || 'https://api.anthropic.com/v1/messages');
-    const system = messages.find(m => m.role === 'system')?.content || '';
-    const conv = messages.filter(m => m.role !== 'system').map(m => ({ role: m.role as 'user'|'assistant', content: m.content }));
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model, system, messages: conv, max_tokens, temperature })
-    });
-    if (!res.ok) {
-      let detail = '';
-      try {
-        const data = await res.clone().json();
-        detail = data?.error?.message || data?.message || '';
-      } catch {
-        try { detail = await res.text(); } catch {}
-      }
-      throw new Error(`Anthropic error ${res.status}${detail ? ': ' + String(detail).slice(0,300) : ''}`);
-    }
-    const data = await res.json();
-    const out = data?.content?.[0]?.text || data?.content || '';
-    return String(out).trim();
-  }
-  // OpenAI SDK targeting OpenRouter (dynamic import to avoid type resolution issues)
-  const { default: OpenAI } = await import('openai');
-  const sdk = new OpenAI({
-    apiKey,
-    baseURL: (baseUrl?.trim() || 'https://openrouter.ai/api/v1'),
-    defaultHeaders: (() => {
-      const h: Record<string,string> = {};
-      const fallbackRef = (typeof window !== 'undefined' && window.location?.origin) ? window.location.origin : '';
-      const fallbackTitle = (typeof document !== 'undefined' && document.title) ? document.title : 'Debate Simulator';
-      h['HTTP-Referer'] = (referer && referer.trim()) || fallbackRef;
-      h['X-Title'] = (appTitle && appTitle.trim()) || fallbackTitle;
-      return h;
-    })()
+  const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001';
+  
+  const response = await fetch(`${backendUrl}/api/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature,
+      top_p,
+      frequency_penalty,
+      presence_penalty,
+      max_tokens,
+      referer: referer || (typeof window !== 'undefined' ? window.location.origin : ''),
+      appTitle: appTitle || 'Debate Simulator'
+    })
   });
 
-  const completion = await sdk.chat.completions.create({
-    model,
-    messages,
-    temperature,
-    top_p,
-    frequency_penalty,
-    presence_penalty,
-    max_tokens
-  });
-  return completion?.choices?.[0]?.message?.content?.trim() || '';
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+    throw new Error(`Backend API error ${response.status}: ${errorData.error || 'Unknown error'}`);
+  }
+
+  const data = await response.json();
+  return data?.choices?.[0]?.message?.content?.trim() || '';
 }
 
 // ---------- Defaults ----------
@@ -492,8 +464,9 @@ export default function App() {
   const [orRef, setOrRef] = useLocalStorage('debate_or_referer', '');
   const [orTitle, setOrTitle] = useLocalStorage('debate_or_title', 'Debate Simulator');
   const memoryRef = useRef<{[name:string]: string[]}>({});
-  // API key from environment variables
-  const effectiveApiKey = config.apiKey;
+  // Backend health status
+  const [backendStatus, setBackendStatus] = useState<'checking'|'connected'|'error'>('checking');
+  const [backendError, setBackendError] = useState<string>('');
   
   // Dynamic model loading
   const [availableModels, setAvailableModels] = useState(FALLBACK_MODELS);
@@ -524,6 +497,28 @@ export default function App() {
 
   useEffect(() => { runSmokeTests(); }, []);
   
+  // Check backend health on mount
+  useEffect(() => {
+    const checkBackendHealth = async () => {
+      try {
+        const response = await fetch(`${config.backendUrl}/api/health`);
+        if (response.ok) {
+          const data = await response.json();
+          setBackendStatus(data.hasApiKey ? 'connected' : 'error');
+          setBackendError(data.hasApiKey ? '' : 'Backend API key not configured');
+        } else {
+          setBackendStatus('error');
+          setBackendError('Backend server not responding');
+        }
+      } catch (error) {
+        setBackendStatus('error');
+        setBackendError('Cannot connect to backend server');
+      }
+    };
+    
+    checkBackendHealth();
+  }, []);
+
   // Load models from OpenRouter API on mount
   useEffect(() => {
     const loadModels = async () => {
@@ -592,8 +587,8 @@ export default function App() {
 
   // Connection testing function
   async function testConnection() {
-    if (!effectiveApiKey) {
-      setConnectionError("OpenRouter API key not configured. Please add VITE_OPENROUTER_API_KEY to your .env file");
+    if (backendStatus !== 'connected') {
+      setConnectionError(backendError || "Backend server not available");
       setConnectionStatus("error");
       return;
     }
@@ -614,9 +609,6 @@ export default function App() {
       ];
 
       const response = await llmReply({
-        provider: 'openai', // Always use OpenAI SDK for OpenRouter
-        apiKey: effectiveApiKey,
-        baseUrl: config.openRouterUrl,
         model,
         messages: testMessages,
         temperature: 0.1,
@@ -725,7 +717,7 @@ export default function App() {
     setLoading(true);
     let text = '';
     try {
-      if (useLLM && effectiveApiKey && model) {
+      if (useLLM && backendStatus === 'connected' && model) {
         const history = log.slice(-8).map(l => `${l.speaker}: ${l.text}`).join(String.fromCharCode(10));
         const system = `You orchestrate a lively debate. Each reply MUST:
 - Be 2–4 sentences, conversational and varied (no formulaic openers).
@@ -740,9 +732,6 @@ Conversation so far:
 ${history}
 Write ONLY the persona's next message.`;
         text = await llmReply({ 
-          provider: 'openai', // Always use OpenAI SDK for OpenRouter
-          apiKey: effectiveApiKey, 
-          baseUrl: config.openRouterUrl, 
           model, 
           temperature, 
           top_p: topP, 
@@ -1218,23 +1207,30 @@ Write ONLY the persona's next message.`;
                       <div className="grid md:grid-cols-2 gap-6">
                         <div className="space-y-4">
                           <div>
-                            <label className="text-sm font-medium">API Key Status</label>
+                            <label className="text-sm font-medium">Backend Status</label>
                             <div className="mt-1 p-3 rounded-md border" style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61' }}>
-                              {config.hasApiKey() ? (
-                                <div className="text-green-700 font-medium">
-                                  ✅ OpenRouter API key configured
+                              {backendStatus === 'checking' && (
+                                <div className="text-blue-700 font-medium flex items-center gap-2">
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                  Checking backend connection...
                                 </div>
-                              ) : (
-                                <div className="text-amber-700 font-medium">
-                                  ⚠️ OpenRouter API key not configured
+                              )}
+                              {backendStatus === 'connected' && (
+                                <div className="text-green-700 font-medium">
+                                  ✅ Backend connected with API key
+                                </div>
+                              )}
+                              {backendStatus === 'error' && (
+                                <div className="text-red-700 font-medium">
+                                  ❌ Backend error: {backendError}
                                 </div>
                               )}
                             </div>
                             <p className="text-xs text-neutral-500 mt-1">
-                              API key is stored in environment variables (.env file). 
-                              {!config.hasApiKey() && (
+                              Backend server handles OpenRouter API calls securely. 
+                              {backendStatus === 'error' && (
                                 <span className="block mt-1 text-amber-600 font-medium">
-                                  Add VITE_OPENROUTER_API_KEY to your .env file and restart the dev server.
+                                  Start the backend server: <code className="bg-gray-100 px-1 rounded">cd backend && npm install && npm start</code>
                                 </span>
                               )}
                             </p>
@@ -1303,7 +1299,7 @@ Write ONLY the persona's next message.`;
                           <div className="pt-2">
                             <Button 
                               onClick={testConnection} 
-                              disabled={connectionStatus === 'testing' || !effectiveApiKey || !model}
+                              disabled={connectionStatus === 'testing' || backendStatus !== 'connected' || !model}
                               variant="outline"
                               className="w-full hover:opacity-90 border-2"
                               style={{ backgroundColor: '#F8F1DD', borderColor: '#157C61', color: '#157C61' }}
@@ -1316,8 +1312,8 @@ Write ONLY the persona's next message.`;
                             {connectionError && (
                               <p className="text-xs text-red-600 mt-2">{connectionError}</p>
                             )}
-                            {!effectiveApiKey && (
-                              <p className="text-xs text-amber-600 mt-2">Backend API key required for testing</p>
+                            {backendStatus !== 'connected' && (
+                              <p className="text-xs text-amber-600 mt-2">Backend server required for testing</p>
                             )}
                           </div>
                         </div>
@@ -1408,19 +1404,19 @@ Write ONLY the persona's next message.`;
               {log.length === 0 && (
                 <div className="text-sm text-neutral-500">
                   Press <strong>Start</strong> to begin. Rotates speakers, changes topic each round, and stops after the selected rounds.
-                  {useLLM && !effectiveApiKey && (
+                  {useLLM && backendStatus === 'error' && (
                     <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                       <div className="text-amber-800 font-medium">🤖 AI Mode Enabled</div>
                       <div className="text-amber-700 text-xs mt-1">
-                        OpenRouter API key not configured. Add VITE_OPENROUTER_API_KEY to your .env file and restart the dev server, or disable AI mode to use local generation.
+                        Backend server not available. Start the backend server to use AI-powered debates, or disable AI mode to use local generation.
                       </div>
                     </div>
                   )}
-                  {useLLM && effectiveApiKey && (
+                  {useLLM && backendStatus === 'connected' && (
                     <div className="mt-2 p-3 bg-green-50 border border-green-200 rounded-lg">
                       <div className="text-green-800 font-medium">🤖 AI Mode Enabled</div>
                       <div className="text-green-700 text-xs mt-1">
-                        Using OpenRouter API key for AI-powered debates. Select your preferred model in Settings.
+                        Using backend server for AI-powered debates. Select your preferred model in Settings.
                       </div>
                     </div>
                   )}

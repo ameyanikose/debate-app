@@ -1,14 +1,14 @@
-// Configuration for API keys and defaults
+// Configuration for defaults
 export const config = {
-  // OpenRouter API key from environment variables
-  apiKey: import.meta.env.VITE_OPENROUTER_API_KEY || '',
-  
   // Default settings
   defaultModel: import.meta.env.VITE_DEFAULT_MODEL || 'deepseek/deepseek-chat',
   
-  // OpenRouter configuration
-  openRouterUrl: 'https://openrouter.ai/api/v1',
+  // Backend configuration
+  backendUrl: import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001',
   
-  // Check if API key is available
-  hasApiKey: () => !!import.meta.env.VITE_OPENROUTER_API_KEY,
+  // Check if backend is available
+  hasBackend: () => {
+    // This will be checked via API call to backend health endpoint
+    return true;
+  },
 };
