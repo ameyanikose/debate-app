@@ -3,12 +3,11 @@ export const config = {
   // Default settings
   defaultModel: import.meta.env.VITE_DEFAULT_MODEL || 'deepseek/deepseek-chat',
   
-  // Backend configuration
-  backendUrl: import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001',
+  // OpenRouter API configuration
+  openRouterApiKey: import.meta.env.VITE_OPENROUTER_API_KEY,
   
-  // Check if backend is available
-  hasBackend: () => {
-    // This will be checked via API call to backend health endpoint
-    return true;
+  // Check if API key is configured
+  hasApiKey: () => {
+    return !!import.meta.env.VITE_OPENROUTER_API_KEY;
   },
 };

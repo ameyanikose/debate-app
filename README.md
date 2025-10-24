@@ -9,7 +9,7 @@ A React TypeScript application that simulates live debates between configurable 
 - **Persona management** - create, edit, and customize debate participants
 - **Topic management** - add, edit, and organize discussion topics
 - **Settings panel** - configure rounds, delays, and behavior
-- **External LLM support** - integrate with OpenAI, Anthropic, or OpenRouter APIs
+- **OpenRouter AI integration** - direct integration with 200+ AI models via OpenRouter API
 - **Export functionality** - copy or download debate transcripts
 - **Responsive design** - works on desktop and mobile devices
 
@@ -42,12 +42,18 @@ cd debate-app
 npm install
 ```
 
-3. Start the development server:
+3. Set up environment variables (optional, for AI features):
+```bash
+# Create .env file
+echo "VITE_OPENROUTER_API_KEY=your_openrouter_api_key_here" > .env
+```
+
+4. Start the development server:
 ```bash
 npm run dev
 ```
 
-4. Open your browser and navigate to `http://localhost:5173`
+5. Open your browser and navigate to `http://localhost:5173`
 
 ## Deployment
 
@@ -64,6 +70,7 @@ npm run build
    - Connect your GitHub repository to Netlify
    - Set build command: `npm run build`
    - Set publish directory: `dist`
+   - Add environment variable: `VITE_OPENROUTER_API_KEY` with your OpenRouter API key
    - Deploy!
 
 The `netlify.toml` file is already configured for automatic deployment.
@@ -80,7 +87,7 @@ The `netlify.toml` file is already configured for automatic deployment.
 
 ### Advanced Features
 
-- **External LLM Integration**: Enable external API usage in settings to use OpenAI, Anthropic, or OpenRouter for more sophisticated responses
+- **OpenRouter AI Integration**: Enable AI mode in settings to use 200+ models from OpenRouter for more sophisticated responses
 - **Custom Personas**: Create detailed personas with names, roles, ages, colors, bios, and stances
 - **Topic Management**: Import topics in bulk or edit them individually
 - **Auto-run**: Configure the app to start debates automatically when loaded
