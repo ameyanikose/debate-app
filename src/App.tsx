@@ -162,70 +162,54 @@ const DEFAULT_PERSONAS = [
 
 // ---------- OpenRouter Models ----------
 // Fallback static models in case API fails
+// Note: These are only fallback models - the real free models are fetched dynamically
 const FALLBACK_MODELS = [
-  // Free models (verified working on OpenRouter)
+  // Only include a few known free models as fallback
   { value: "deepseek/deepseek-chat", label: "DeepSeek Chat (Free) - Recommended", category: "free" },
-  { value: "microsoft/phi-3-medium-128k-instruct", label: "Phi-3 Medium 128K (Free)", category: "free" },
   { value: "microsoft/phi-3-mini-128k-instruct", label: "Phi-3 Mini 128K (Free)", category: "free" },
-  { value: "meta-llama/llama-3.1-8b-instruct", label: "Llama 3.1 8B (Free)", category: "free" },
   { value: "meta-llama/llama-3.2-3b-instruct", label: "Llama 3.2 3B (Free)", category: "free" },
-  { value: "meta-llama/llama-3.2-1b-instruct", label: "Llama 3.2 1B (Free)", category: "free" },
-  { value: "google/gemini-flash-1.5", label: "Gemini Flash 1.5 (Free)", category: "free" },
-  { value: "google/gemini-flash-8b", label: "Gemini Flash 8B (Free)", category: "free" },
-  { value: "mistralai/mistral-7b-instruct", label: "Mistral 7B (Free)", category: "free" },
   
-  // Premium models
+  // Premium models for comparison
   { value: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet (Premium)", category: "premium" },
   { value: "openai/gpt-4o-mini", label: "GPT-4o Mini (Cost-effective)", category: "premium" },
   { value: "openai/gpt-4o", label: "GPT-4o (Premium)", category: "premium" },
-  { value: "meta-llama/llama-3.1-405b-instruct", label: "Llama 3.1 405B (Premium)", category: "premium" },
-  { value: "google/gemini-pro-1.5", label: "Gemini Pro 1.5 (Premium)", category: "premium" },
-  { value: "anthropic/claude-3-5-haiku-20241022", label: "Claude 3.5 Haiku (Premium)", category: "premium" },
 ];
 
 // Function to categorize models based on pricing
 function categorizeModel(model: any): 'free' | 'premium' {
-  const promptPrice = parseFloat(model.pricing?.prompt || '0');
-  const completionPrice = parseFloat(model.pricing?.completion || '0');
+  const pricing = model.pricing || {};
   
-  // Known free models from OpenRouter
-  const knownFreeModels = [
-    'deepseek/deepseek-chat',
-    'microsoft/phi-3-medium-128k-instruct',
-    'meta-llama/llama-3.1-8b-instruct',
-    'google/gemini-flash-1.5',
-    'mistralai/mistral-7b-instruct',
-    'microsoft/phi-3-mini-128k-instruct',
-    'meta-llama/llama-3.1-70b-instruct',
-    'google/gemini-flash-8b',
-    'mistralai/mistral-7b-instruct:free',
-    'meta-llama/llama-3.2-3b-instruct',
-    'meta-llama/llama-3.2-1b-instruct',
-    'microsoft/phi-3-mini-4k-instruct',
-    'microsoft/phi-3-mini-128k-instruct:free',
-    'meta-llama/llama-3.1-8b-instruct:free',
-    'google/gemini-flash-1.5:free'
+  // A model is free if ALL pricing fields are "0" (as strings)
+  const isFree = pricing.prompt === "0" &&
+                 pricing.completion === "0" &&
+                 pricing.request === "0" &&
+                 pricing.image === "0" &&
+                 pricing.web_search === "0" &&
+                 pricing.internal_reasoning === "0" &&
+                 pricing.input_cache_read === "0" &&
+                 pricing.input_cache_write === "0";
+  
+  if (isFree) {
+    return 'free';
+  }
+  
+  // Fallback: check if all pricing fields are 0 or undefined
+  const allPricingFields = [
+    pricing.prompt,
+    pricing.completion,
+    pricing.request,
+    pricing.image,
+    pricing.web_search,
+    pricing.internal_reasoning,
+    pricing.input_cache_read,
+    pricing.input_cache_write
   ];
   
-  // Check if it's a known free model
-  if (knownFreeModels.includes(model.id)) {
-    return 'free';
-  }
+  const allZeroOrUndefined = allPricingFields.every(field => 
+    field === "0" || field === 0 || field === undefined || field === null
+  );
   
-  // If both prompt and completion are free, it's a free model
-  if (promptPrice === 0 && completionPrice === 0) {
-    return 'free';
-  }
-  
-  // If pricing is very low (less than $0.0001 per token), consider it free
-  if (promptPrice < 0.0001 && completionPrice < 0.0001) {
-    return 'free';
-  }
-  
-  // Check for models with "free" in the name or description
-  const modelName = (model.name || '').toLowerCase();
-  const modelId = (model.id || '').toLowerCase();
-  if (modelName.includes('free') || modelId.includes('free')) {
+  if (allZeroOrUndefined) {
     return 'free';
   }
   
@@ -247,6 +231,12 @@ async function fetchOpenRouterModels() {
     
     const models = data.data.map((model: any) => {
       const category = categorizeModel(model);
+      
+      // Debug logging for free models
+      if (category === 'free') {
+        console.log(`Free model found: ${model.id}`, model.pricing);
+      }
+      
       return {
         value: model.id,
         label: `${model.name} (${category === 'free' ? 'Free' : 'Premium'})`,
@@ -257,19 +247,17 @@ async function fetchOpenRouterModels() {
       };
     });
     
-    // Sort by category (free first) then by name
-    models.sort((a: any, b: any) => {
-      if (a.category !== b.category) {
-        return a.category === 'free' ? -1 : 1;
-      }
-      return a.label.localeCompare(b.label);
-    });
+    // Filter to only show free models
+    const freeModels = models.filter((model: any) => model.category === 'free');
     
-    console.log(`Loaded ${models.length} models from OpenRouter API`);
-    console.log(`Free models: ${models.filter((m: any) => m.category === 'free').length}`);
-    console.log(`Premium models: ${models.filter((m: any) => m.category === 'premium').length}`);
+    // Sort by name
+    freeModels.sort((a: any, b: any) => a.label.localeCompare(b.label));
     
-    return models;
+    console.log(`Loaded ${models.length} total models from OpenRouter API`);
+    console.log(`Free models available: ${freeModels.length}`);
+    console.log('Free models:', freeModels.map((m: any) => m.value));
+    
+    return freeModels;
   } catch (error) {
     console.warn('Failed to fetch models from OpenRouter API:', error);
     console.log('Falling back to static model list');
@@ -1295,28 +1283,19 @@ Write ONLY the persona's next message.`;
                                 value={model} 
                                 onChange={(e) => setModel(e.target.value)}
                               >
-                                <optgroup label="Free Models">
-                                  {availableModels.filter(m => m.category === 'free').map((m) => (
-                                    <option key={m.value} value={m.value}>{m.label}</option>
-                                  ))}
-                                </optgroup>
-                                <optgroup label="Premium Models">
-                                  {availableModels.filter(m => m.category === 'premium').map((m) => (
-                                    <option key={m.value} value={m.value}>{m.label}</option>
-                                  ))}
-                                </optgroup>
+                                {availableModels.map((m) => (
+                                  <option key={m.value} value={m.value}>{m.label}</option>
+                                ))}
                               </select>
                             )}
                             {modelsError && (
                               <p className="text-xs text-red-600 mt-1">{modelsError}</p>
                             )}
                             <p className="text-xs text-neutral-500 mt-1">
-                              {availableModels.find(m => m.value === model)?.category === 'free' ? 
-                                '💚 Free model - no credits required!' : 
-                                '💳 Premium model - requires credits'}
+                              💚 All models shown are free - no credits required!
                             </p>
                             <p className="text-xs text-neutral-400 mt-1">
-                              {availableModels.length} models available from OpenRouter
+                              {availableModels.length} free models available from OpenRouter
                             </p>
                           </div>
 
